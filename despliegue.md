@@ -87,24 +87,34 @@ si la ec2 no responde un rato las operaciones igual se hacen: el evento queda en
 
 ## 5. evidencia
 
-```bash
-scripts/evidencia-kafka-ec2.sh <ip publica> ~/.ssh/labsuser.pem
-```
-
-deja todo en `evidencias/kafka-ec2.txt`, con un titulo por paso:
-
-1. `aws ec2 describe-instances` filtrado por el tag `Project=banco-xyz-eft`: id, tipo, estado, ip y dns publico
-2. por ssh en la ec2: `hostname`, ip y dns publico (metadata con imdsv2), `docker compose ps` y `kafka-topics.sh --describe`
-3. el `KAFKA_BOOTSTRAP` que usan ms-pagos y notificaciones en local
-4. una transferencia por el gateway con token
-5. ese evento leido dentro de la ec2 con `kafka-console-consumer.sh --from-beginning`
-6. `GET /api/notificaciones` mostrando que notificaciones lo consumio, y el grupo de consumidores con lag 0
-
-tambien se puede revisar a mano:
+con la ec2 arriba y el compose local apuntando a ella, estos son los comandos para mostrar que kafka corre en aws y que los microservicios lo usan:
 
 ```bash
-ssh -i ~/.ssh/labsuser.pem ec2-user@<ip>
-cd /opt/kafka-banco && docker compose ps
+# 1. la instancia (id, tipo, estado, ip y dns publico)
+aws ec2 describe-instances --filters Name=tag:Project,Values=banco-xyz-eft Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].{Id:InstanceId,Tipo:InstanceType,Estado:State.Name,IP:PublicIpAddress,DNS:PublicDnsName}' --output table
+
+# 2. dentro de la ec2: contenedores y topicos
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'hostname; cd /opt/kafka-banco && docker compose ps'
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-topics.sh --describe --exclude-internal --bootstrap-server localhost:9092'
+
+# 3. que ms-pagos y notificaciones (locales) apuntan a la ec2
+docker compose exec ms-pagos env | grep KAFKA
+docker compose logs notificaciones | grep -m1 "bootstrap.servers"
+
+# 4. una transferencia por el gateway
+WEB=$(scripts/token.sh web)
+curl -sk -H "Authorization: Bearer $WEB" -H "Idempotency-Key: ec2-$(date +%s)" -H 'Content-Type: application/json' \
+     -d '{"fromAccount":101,"toAccount":102,"amount":4321}' https://localhost:8443/api/web/transferencias
+
+# 5. ese evento leido dentro de la ec2
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic banco.transacciones --from-beginning --max-messages 50 --timeout-ms 10000 --property print.key=true'
+
+# 6. notificaciones (local) lo consumio desde la ec2, y el grupo quedo con lag 0
+OPS=$(scripts/token.sh ops)
+curl -sk -H "Authorization: Bearer $OPS" https://localhost:8443/api/notificaciones
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group notificaciones'
 ```
 
 y kafka-ui en `http://<ip>:8090`.
@@ -115,8 +125,6 @@ capturas para el informe y el video:
 - terminal con la sesion ssh y `docker compose ps` en la ec2
 - kafka-ui en `http://<ip>:8090`: el broker, el topico `banco.transacciones` con el mensaje de la transferencia y el consumidor `notificaciones`
 - `docker compose ps` local sin el contenedor kafka y el `env | grep KAFKA` de ms-pagos
-
-el script tiene un modo `--local` para probarlo sin aws (`scripts/evidencia-kafka-ec2.sh 127.0.0.1 - --local`). lo probe contra un kafka levantado con la misma plantilla del playbook y anunciado por ip, la salida esta en `evidencias/kafka-ec2-simulado-local.txt`.
 
 ## 6. alternativa manual con aws-cli
 
@@ -132,7 +140,7 @@ for p in 22 9094 8090; do
   aws ec2 authorize-security-group-ingress --group-id $SG --protocol tcp --port $p --cidr $MI_IP
 done
 
-# amazon linux 2023 con la ami de ssm, key pair vockey del lab y el tag que usa el script de evidencia.
+# amazon linux 2023 con la ami de ssm, key pair vockey del lab y el tag Project para encontrarla despues.
 # el user-data instala docker como en la clase 7
 cat > user-data.sh <<'EOF'
 #!/bin/bash

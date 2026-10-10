@@ -103,7 +103,7 @@ docker-compose ps                    # esperar que todo diga healthy (2 a 3 min)
 
 por defecto el `.env` trae `COMPOSE_PROFILES=kafka-local` y se levanta kafka en local. para usar el kafka de la ec2 se saca esa linea y se pone `KAFKA_BOOTSTRAP=<ip>:9094` (ver [despliegue.md](despliegue.md)).
 
-el detalle con todos los curl esta en [instrucciones.md](instrucciones.md). para el video hay 2 scripts: `scripts/demo-resiliencia.sh` (retry, circuito OPEN, fallback y vuelta a CLOSED) y `scripts/evidencia-kafka-ec2.sh` (evidencia de kafka en la ec2).
+el detalle con todos los curl esta en [instrucciones.md](instrucciones.md).
 
 los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en modo mysql y kafka mockeado).
 
@@ -143,7 +143,7 @@ los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en mo
 
 ## evidencias
 
-salidas reales de mi terminal en [evidencias/](evidencias/) (todas del 2026-10-10, con el compose arriba en colima):
+en [evidencias/](evidencias/) (todas del 2026-10-10, con el compose arriba en colima):
 
 | archivo | que muestra |
 |---|---|
@@ -153,10 +153,9 @@ salidas reales de mi terminal en [evidencias/](evidencias/) (todas del 2026-10-1
 | `03-escalado-eureka.txt` | `--scale ms-cuentas=2`, las 2 instancias en eureka y las llamadas repartidas 6/5 entre las 2 |
 | `04-batch.txt` | los 3 jobs como contenedor one-shot, conteos en mysql y la reejecucion automatica (FAILED -> restart de la misma instancia -> COMPLETED) |
 | `05-docker-stats.txt` | memoria de todo arriba (unos 2,9 GB con 2 replicas de ms-cuentas) |
-| `resiliencia.txt` | salida de `scripts/demo-resiliencia.sh`: CLOSED, ms-cuentas apagado, 3 intentos en `/actuator/retryevents`, OPEN con fallback, HALF_OPEN y CLOSED |
+| `resiliencia.txt` | resilience4j paso a paso: CLOSED, ms-cuentas apagado, 3 intentos en `/actuator/retryevents`, OPEN con fallback, HALF_OPEN y CLOSED |
 | `batch-transacciones.txt`, `batch-intereses.txt`, `batch-estadoCuenta.txt` | las lineas del `BatchMetricsListener` de cada job (leidos, escritos, descartados, tasa de omision) |
-| `kafka-ec2-simulado-local.txt` | prueba del modo "kafka en la nube" en mi mac: sin el profile kafka-local, con un kafka aparte armado con la plantilla del playbook y anunciado por ip. el productor y el consumidor usan `KAFKA_BOOTSTRAP=<ip>:9094` |
-| `kafka-ec2.txt` | (lo genera `scripts/evidencia-kafka-ec2.sh` contra la ec2 de verdad) |
+| `kafka-ec2.txt` | kafka corriendo en la ec2 (instancia, `docker compose ps` por ssh, topicos), el `KAFKA_BOOTSTRAP` de los servicios locales y un evento producido en local, leido en la ec2 y consumido por notificaciones |
 
 capturas en [evidencias/capturas/](evidencias/capturas/):
 

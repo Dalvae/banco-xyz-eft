@@ -1,6 +1,6 @@
 # instrucciones: como levantar y probar cada parte
 
-todo lo de aca lo corri en mi mac con colima (4 cpu, 8gb) y `docker-compose` 5.5. las salidas reales estan en [evidencias/](evidencias/). en linux el comando suele ser `docker compose` (con espacio), funciona igual; los scripts detectan cual hay.
+todo lo de aca lo corri en mi mac con colima (4 cpu, 8gb) y `docker-compose` 5.5. lo que muestra cada paso esta en [evidencias/](evidencias/). en linux el comando suele ser `docker compose` (con espacio), funciona igual.
 
 ## 0. requisitos
 
@@ -136,17 +136,13 @@ docker-compose start ms-cuentas
 # a los 15s pasa a HALF_OPEN y con 2 llamadas buenas vuelve a CLOSED
 ```
 
-todo eso junto, con titulos por paso, lo hace el script que use para el video (tarda como 1 minuto):
+para ver el retry en accion (los 3 intentos de cada llamada) mientras ms-cuentas esta abajo:
 
 ```bash
-scripts/demo-resiliencia.sh | tee evidencias/resiliencia.txt
+docker compose exec bff-web wget -qO- http://localhost:8441/actuator/retryevents/msCuentas
+docker compose exec ms-pagos wget -qO- http://localhost:8082/actuator/retryevents/msCuentas     # despues de intentar una transferencia
+docker compose exec ms-pagos wget -qO- http://localhost:8082/actuator/circuitbreakers
 ```
-
-1. muestra los circuitos de bff-web y ms-pagos en CLOSED
-2. apaga ms-cuentas (`stop`)
-3. llama al dashboard y a una transferencia, y muestra los 3 intentos en `/actuator/retryevents` de bff-web y de ms-pagos
-4. sigue llamando hasta que el circuito queda OPEN: dashboard con `degraded: true` al tiro, cajero 503, y el json de `/actuator/circuitbreakers`
-5. levanta ms-cuentas, espera HALF_OPEN y llama hasta que vuelve a CLOSED
 
 los endpoints `/actuator/circuitbreakers`, `/actuator/circuitbreakerevents`, `/actuator/retries` y `/actuator/retryevents` estan abiertos sin token (no muestran datos de clientes). como los bff no tienen puerto hacia afuera se consultan asi: `docker-compose exec bff-web wget -qO- http://localhost:8441/actuator/retryevents`.
 
@@ -248,22 +244,35 @@ ms-pagos crea los topicos si no existen (el playbook tambien los crea). para vol
 con la ec2 arriba y el compose apuntando a ella:
 
 ```bash
-scripts/evidencia-kafka-ec2.sh <ip_publica> ~/.ssh/labsuser.pem
+# 1. la instancia (id, tipo, estado, ip y dns publico)
+aws ec2 describe-instances --filters Name=tag:Project,Values=banco-xyz-eft Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].{Id:InstanceId,Tipo:InstanceType,Estado:State.Name,IP:PublicIpAddress,DNS:PublicDnsName}' --output table
+
+# 2. dentro de la ec2: contenedores y topicos
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'hostname; cd /opt/kafka-banco && docker compose ps'
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-topics.sh --describe --exclude-internal --bootstrap-server localhost:9092'
+
+# 3. que ms-pagos y notificaciones (locales) apuntan a la ec2
+docker compose exec ms-pagos env | grep KAFKA
+docker compose logs notificaciones | grep -m1 "bootstrap.servers"
+
+# 4. una transferencia por el gateway
+WEB=$(scripts/token.sh web)
+curl -sk -H "Authorization: Bearer $WEB" -H "Idempotency-Key: ec2-$(date +%s)" -H 'Content-Type: application/json' \
+     -d '{"fromAccount":101,"toAccount":102,"amount":4321}' https://localhost:8443/api/web/transferencias
+
+# 5. ese evento leido dentro de la ec2
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic banco.transacciones --from-beginning --max-messages 50 --timeout-ms 10000 --property print.key=true'
+
+# 6. notificaciones (local) lo consumio desde la ec2, y el grupo quedo con lag 0
+OPS=$(scripts/token.sh ops)
+curl -sk -H "Authorization: Bearer $OPS" https://localhost:8443/api/notificaciones
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group notificaciones'
 ```
-
-deja todo en `evidencias/kafka-ec2.txt`:
-
-1. `aws ec2 describe-instances` filtrado por el tag `Project=banco-xyz-eft`: id, tipo, estado, ip y dns publico
-2. por ssh en la ec2: `hostname`, ip y dns publico (metadata imdsv2), `docker compose ps` y `kafka-topics.sh --describe`
-3. el `KAFKA_BOOTSTRAP` efectivo de ms-pagos y notificaciones aca en local (env y el `bootstrap.servers` del log)
-4. una transferencia por el gateway con token
-5. ese mismo evento leido EN la ec2 con `kafka-console-consumer.sh --from-beginning`
-6. `GET /api/notificaciones` mostrando que notificaciones (local) lo consumio, y el grupo de consumidores con lag 0
 
 capturas que hay que sacar a mano para el informe:
 
 - kafka-ui de la ec2 en `http://<ip>:8090`: topics -> `banco.transacciones` -> messages (con el evento de la transferencia) y consumers -> `notificaciones`
 - la consola de aws (ec2 -> instances) con la instancia `banco-xyz-eft` en running y su ip publica
-- la terminal con la sesion ssh (`ssh -i ~/.ssh/labsuser.pem ec2-user@<ip>` y `docker ps`)
-
-para probar el script sin aws hay un modo `--local` (`scripts/evidencia-kafka-ec2.sh 127.0.0.1 - --local`): se salta aws y ssh y corre los mismos comandos contra un contenedor `kafka` local. lo use con un kafka armado con la plantilla del playbook, la salida esta en `evidencias/kafka-ec2-simulado-local.txt`.
+- la terminal con la sesion ssh (`ssh -i ~/.ssh/labsuser.pem ec2-user@<ip>` y `docker compose ps`)

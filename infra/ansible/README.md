@@ -33,9 +33,8 @@ ansible-playbook teardown.yml
 ```
 
 Despues se levanta el resto local: en el `.env` de la raiz se deja `COMPOSE_PROFILES=` (sin `kafka-local`, asi no
-parte el kafka de aca) y `KAFKA_BOOTSTRAP=<ip>:9094`, y `docker compose up -d`. La evidencia (instancia, ssh, topicos,
-un evento producido en local y leido en la ec2) se saca con `scripts/evidencia-kafka-ec2.sh <ip> <pem>`.
-Todo el paso a paso esta en `despliegue.md`.
+parte el kafka de aca) y `KAFKA_BOOTSTRAP=<ip>:9094`, y `docker compose up -d`. Todo el paso a paso, y los comandos para
+revisar la ec2 por ssh y ver que los servicios locales usan este kafka, estan en `despliegue.md`.
 Si cambia mi ip publica hay que volver a correr `provision.yml` (actualiza el security group).
 
 Variables en `group_vars/all.yml`: `instance_type`, `kafka_externo_port` (9094), `kafka_ui_port` (8090),
