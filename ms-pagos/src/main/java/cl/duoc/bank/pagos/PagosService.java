@@ -5,6 +5,7 @@ import static cl.duoc.bank.shared.DomainDtos.LegResult;
 import static cl.duoc.bank.shared.DomainDtos.Receipt;
 
 import cl.duoc.bank.shared.ApiException;
+import cl.duoc.bank.shared.Montos;
 import cl.duoc.bank.shared.Eventos;
 import cl.duoc.bank.shared.Eventos.AlertaSeguridad;
 import cl.duoc.bank.shared.Eventos.TransaccionCompletada;
@@ -249,10 +250,7 @@ public class PagosService {
         if (key == null || key.isBlank() || key.length() > 120) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Idempotency-Key es obligatorio y debe tener hasta 120 caracteres");
         }
-        if (monto == null || monto.signum() <= 0 || monto.scale() > 2) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Monto invalido: debe ser positivo y con hasta 2 decimales");
-        }
-        return monto.setScale(2);
+        return Montos.validar(monto);
     }
 
     private static String descripcion(Op op, boolean salida) {

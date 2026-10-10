@@ -3,6 +3,7 @@ package cl.duoc.bank.cuentas.domain;
 import static cl.duoc.bank.shared.DomainDtos.*;
 
 import cl.duoc.bank.shared.ApiException;
+import cl.duoc.bank.shared.Montos;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -206,11 +207,7 @@ public class CuentasService {
         if (request == null || request.operationId() == null || request.operationId().isBlank() || request.operationId().length() > 60) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "operationId es obligatorio (max 60)");
         }
-        BigDecimal monto = request.amount();
-        if (monto == null || monto.signum() <= 0 || monto.scale() > 2) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Monto invalido: debe ser positivo y con hasta 2 decimales");
-        }
-        return monto.setScale(2);
+        return Montos.validar(request.amount());
     }
 
     private Account accountById(long id, boolean lock) {
