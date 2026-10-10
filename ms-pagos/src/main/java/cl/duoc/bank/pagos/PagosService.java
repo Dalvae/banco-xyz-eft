@@ -123,8 +123,10 @@ public class PagosService {
 
         if (op.destino() != null) {
             try {
-                cuentas.acreditar(op.destino(), new LegRequest(op.id() + "-cre", monto, null,
+                LegResult credito = cuentas.acreditar(op.destino(), new LegRequest(op.id() + "-cre", monto, null,
                         op.tipo().toLowerCase(), descripcion(op, false)));
+                // en un deposito no hay origen, el saldo que se muestra es el de la cuenta que recibio
+                if (op.origen() == null) saldo = credito.balance();
             } catch (ResponseStatusException rechazo) {
                 if (op.origen() == null) {
                     rechazar(op, rechazo.getReason());
