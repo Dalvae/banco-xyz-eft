@@ -1,0 +1,20 @@
+%% flujo oauth2 por canal: authorization code + pkce para usuarios, client_credentials entre servicios
+sequenceDiagram
+    autonumber
+    participant App as App del canal
+    participant A as auth-server<br/>(por el gateway)
+    participant B as gateway + BFF
+    participant P as ms-pagos
+    participant C as ms-cuentas
+
+    App->>A: /oauth2/authorize<br/>client_id del canal + PKCE
+    A-->>App: login y redirect con code
+    App->>A: /oauth2/token (code + verifier)
+    A-->>App: JWT: aud = canal, scopes del canal
+    App->>B: HTTPS con Bearer JWT
+    B->>B: valida firma (JWKS), issuer,<br/>audiencia y scope
+    B->>P: reenvia el token del usuario
+    P->>P: @PreAuthorize por scope
+    P->>A: client_credentials (ms-pagos)
+    A-->>P: JWT scope cuentas:operar
+    P->>C: /internal/... con token de servicio

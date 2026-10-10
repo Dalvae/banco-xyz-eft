@@ -1,0 +1,20 @@
+%% antes y despues
+flowchart LR
+    subgraph legacy[Legacy]
+        direction TB
+        f1[Web] & f2[Movil] & f3[Cajero] --> mono[Backend monolitico<br/>misma respuesta a todos]
+        mono --> mf[(BD unica)]
+        cron[cron + scripts Shell<br/>COBOL en mainframe] --> mf
+    end
+
+    subgraph nuevo[Nuevo]
+        direction TB
+        n1[Web] & n2[Movil] & n3[Cajero] --> ngw[api-gateway HTTPS]
+        ngw --> nb[3 BFF por canal]
+        nb --> nms[ms-cuentas / ms-pagos / ms-clientes<br/>escalables por separado]
+        nms --> nd[(MySQL: un schema por servicio)]
+        nms --> nk{{Kafka}} --> nn[notificaciones]
+        nbatch[Spring Batch<br/>particionado, skip/retry] --> nbd[(MySQL: schema batch)]
+    end
+
+    legacy == migracion ==> nuevo

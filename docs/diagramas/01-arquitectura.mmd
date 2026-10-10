@@ -1,0 +1,34 @@
+%% arquitectura general del banco xyz (eft s9)
+flowchart TB
+    canales([Web / App movil / Cajero])
+    gw[api-gateway :8443 HTTPS<br/>circuit breaker por ruta]
+    auth[auth-server :9000<br/>OAuth2 / JWT]
+    sc[eureka-server :8761<br/>config-server :8888]
+
+    subgraph bffs[Backend for Frontend]
+        direction LR
+        bweb[bff-web :8441]
+        bmob[bff-mobile :8442]
+        batm[bff-atm :8444]
+    end
+
+    pagos[ms-pagos :8082<br/>saga + outbox]
+    cuentas[ms-cuentas :8081<br/>dueno del saldo]
+    clientes[ms-clientes :8083]
+
+    mysql[(MySQL 8.4<br/>un schema por servicio)]
+    kafka{{Kafka: banco.transacciones<br/>banco.alertas-seguridad}}
+    notif[notificaciones :8450]
+    batch[batch: 3 jobs]
+
+    canales --> gw
+    gw -- /oauth2, /login --> auth
+    gw -. registro y config .- sc
+    gw -- lb:// --> bweb & bmob & batm
+    bweb & bmob & batm -- Resilience4j --> cuentas
+    bweb & batm --> pagos
+    bweb --> clientes
+    pagos -- client_credentials --> cuentas
+    cuentas --> clientes
+    pagos -- outbox --> kafka --> notif
+    cuentas & clientes & pagos & notif & batch --> mysql

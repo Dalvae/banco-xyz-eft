@@ -1,0 +1,14 @@
+%% estados del circuit breaker (config-repo/application.yml, config default para msCuentas, msPagos y msClientes)
+stateDiagram-v2
+    direction TB
+    [*] --> CLOSED
+    CLOSED --> OPEN: 50 % de fallas en las ultimas 10 llamadas (minimo 4)
+    OPEN --> HALF_OPEN: pasan 15 s (transicion automatica)
+    HALF_OPEN --> CLOSED: las 2 llamadas de prueba salen bien
+    HALF_OPEN --> OPEN: falla una llamada de prueba
+    note right of CLOSED
+        los 4xx (ResponseStatusException) no cuentan como falla
+    end note
+    note right of OPEN
+        no llama al servicio, va directo al fallback
+    end note

@@ -1,0 +1,15 @@
+%% los 3 jobs batch: particionado, reader/processor/writer, skip/retry, umbral y reejecucion
+flowchart TB
+    run([docker compose run batch<br/>job: transacciones, intereses<br/>o estadoCuenta]) --> part[CsvPartitioner<br/>rangos de lineas<br/>en paralelo]
+    part --> r[Reader<br/>FlatFileItemReader]
+    r --> pr[Processor<br/>normaliza y valida]
+    pr --> w[Writer<br/>JdbcBatchItemWriter<br/>MySQL, chunk 100]
+    r -. fila ilegible .-> omit[(tabla omitidos<br/>+ CSV)]
+    pr -. dato invalido .-> omit
+    w -. error transitorio de BD .-> retry[retry x3<br/>backoff exponencial]
+    retry -.-> w
+    w --> fin{tasa de omision<br/>vs umbral}
+    fin -- bajo umbral --> ok([COMPLETED, exit 0])
+    fin -- sobre umbral --> failu([FAILED, no se reintenta])
+    w -- step FAILED<br/>por error critico --> re[ReejecucionRunner<br/>hasta 3 intentos]
+    re -- restart de la misma instancia:<br/>solo la particion que fallo --> part

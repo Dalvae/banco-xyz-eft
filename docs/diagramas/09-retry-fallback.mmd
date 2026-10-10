@@ -1,0 +1,20 @@
+%% circuit breaker afuera (aspect-order 1) y retry adentro (aspect-order 2): ejemplo bff-mobile -> ms-cuentas caido
+sequenceDiagram
+    autonumber
+    participant B as bff-mobile
+    participant CB as CircuitBreaker msCuentas
+    participant R as Retry msCuentas
+    participant C as ms-cuentas
+    B->>CB: home() para GET /api/mobile/me/inicio
+    CB->>R: circuito CLOSED, deja pasar
+    R->>C: intento 1
+    C--xR: ResourceAccessException
+    Note over R: espera 100 ms
+    R->>C: intento 2
+    C--xR: ResourceAccessException
+    Note over R: espera 100 ms
+    R->>C: intento 3
+    C--xR: ResourceAccessException
+    R-->>CB: se agotan los 3 intentos, cuenta 1 falla
+    CB-->>B: homeFallback: inicio vacio, degraded=true, "Servicio temporalmente no disponible"
+    Note over B,CB: los POST de plata desde los BFF (retiro, deposito, transferencia, pago)<br/>solo tienen circuit breaker: sin retry para no duplicar un cobro

@@ -1,0 +1,27 @@
+%% transferencia: saga con compensacion + evento kafka via outbox
+sequenceDiagram
+    autonumber
+    actor U as Cliente web
+    participant W as gateway + bff-web
+    participant P as ms-pagos
+    participant C as ms-cuentas
+    participant K as Kafka y notificaciones
+
+    U->>W: POST transferencia<br/>JWT + Idempotency-Key
+    W->>P: POST /pagos (solo CB)
+    Note over P: operacion PENDIENTE
+    P->>C: debito origen (op-deb)
+    C-->>P: 200 saldo
+    P->>C: credito destino (op-cre)
+    alt credito OK
+        C-->>P: 200
+        Note over P: COMPLETADA + evento<br/>en outbox (misma tx)
+        P-->>U: 200 comprobante
+    else rechazo o ms-cuentas caido
+        C--xP: 4xx / timeout
+        P->>C: reversa de op-deb
+        Note over P: REVERTIDA o queda<br/>para el reconciliador
+        P-->>U: 409 / 503 sin cargo
+    end
+    P->>K: outbox cada 5 s a banco.transacciones
+    Note over K: guarda sin duplicar<br/>(evento_id) y ack

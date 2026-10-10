@@ -1,0 +1,30 @@
+%% despliegue: servicios en docker compose en el equipo del alumno, kafka en una ec2 de aws (ansible)
+flowchart TB
+    usuario([Cliente]) --> gw
+
+    subgraph local[Equipo del alumno: docker compose, red banco-net]
+        gw[api-gateway :8443 HTTPS<br/>unico puerto de entrada]
+        infra[eureka, config-server<br/>y auth-server]
+        bff[bff-web, bff-mobile<br/>y bff-atm]
+        c1[ms-cuentas #1]
+        c2[ms-cuentas #2]
+        p1[ms-pagos]
+        cl1[ms-clientes]
+        notif[notificaciones]
+        db[(MySQL 8.4<br/>un schema por servicio)]
+    end
+
+    subgraph aws[AWS us-east-1: EC2 t3.medium]
+        direction LR
+        sg[Security Group<br/>22, 9094 y 8090<br/>solo IP del alumno] --> kafka[Kafka 3.9.1 KRaft<br/>1 broker :9094] --- kui[kafka-ui :8090]
+    end
+    dev([Alumno con ansible-playbook]) -- provision / deploy --> sg
+
+    gw --> bff
+    gw -.- infra
+    bff -- "lb:// (--scale 2)" --> c1 & c2
+    bff --> p1 & cl1
+    p1 --> c1
+    c1 & c2 & cl1 & notif --- db
+    p1 -- KAFKA_BOOTSTRAP --> sg
+    kafka -- consume --> notif

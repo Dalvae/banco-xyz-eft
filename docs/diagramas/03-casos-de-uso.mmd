@@ -1,0 +1,41 @@
+%% casos de uso por canal (cada canal tiene su bff y sus scopes)
+flowchart TB
+    cw([Cliente web])
+    cm([Cliente movil])
+    ca([Cliente en cajero])
+    ops([Operaciones])
+    sched([Planificador batch])
+
+    subgraph sweb[bff-web: web:read y web:write]
+        uc1(Ver dashboard<br/>y movimientos)
+        uc2(Transferir y<br/>pagar servicios)
+        uc4(Abrir / cerrar cuenta<br/>y editar perfil)
+    end
+    subgraph smob[bff-mobile: mobile:read]
+        uc6(Ver inicio<br/>resumido)
+    end
+    subgraph satm[bff-atm: atm:balance, withdraw, deposit]
+        uc7(Consultar saldo)
+        uc8(Retirar)
+        uc9(Depositar)
+    end
+    subgraph snot[notificaciones: client_credentials]
+        uc10(Ver notificaciones<br/>y alertas)
+        uc11(Pausar / reanudar<br/>consumidor)
+    end
+    subgraph sbatch[batch: Spring Batch]
+        uc12(Transacciones<br/>diarias)
+        uc13(Intereses)
+        uc14(Estados de<br/>cuenta anuales)
+    end
+
+    cw --> uc1 & uc2 & uc4
+    cm --> uc6
+    ca --> uc7 & uc8 & uc9
+    ops --> uc10 & uc11
+    sched --> uc12 & uc13 & uc14
+
+    %% 3 filas para que no quede tan ancho
+    uc1 ~~~ ca
+    uc6 ~~~ ops
+    uc8 ~~~ sched
