@@ -22,7 +22,7 @@ public class SecurityConfiguration {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // health y el estado del circuito abiertos para la demo
-                        .requestMatchers("/actuator/health/**", "/actuator/circuitbreakers", "/actuator/circuitbreakerevents").permitAll()
+                        .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/circuitbreakers", "/actuator/circuitbreakerevents").permitAll()
                         .requestMatchers("/error").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()));

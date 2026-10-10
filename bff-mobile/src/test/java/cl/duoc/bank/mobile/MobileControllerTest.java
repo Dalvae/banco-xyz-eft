@@ -33,9 +33,9 @@ class MobileControllerTest {
 
     @Test
     void inicioMuestraMaximoCincoMovimientos() throws Exception {
-        when(bankClient.profile("mobile-token")).thenReturn(new DomainDtos.Profile("demo", "Demo"));
+        when(bankClient.profile("mobile-token")).thenReturn(new DomainDtos.Profile("demo", "Demo", null, null, null));
         when(bankClient.accounts("mobile-token")).thenReturn(List.of(new DomainDtos.Account(101, "demo",
-                "Cuenta corriente", "****0101", "CLP", new BigDecimal("1000000"), "fixture")));
+                "Cuenta corriente", "****0101", "CLP", new BigDecimal("1000000"), "ABIERTA", "fixture")));
         List<DomainDtos.Movement> seis = LongStream.rangeClosed(1, 6).mapToObj(id -> new DomainDtos.Movement(id, 101,
                 "2026-09-01", "compra", new BigDecimal("1000"), "detalle", "legacy")).toList();
         when(bankClient.movements(101, 0, 5, "mobile-token")).thenReturn(new DomainDtos.MovementPage(seis, 0, 5, 6));
@@ -47,7 +47,7 @@ class MobileControllerTest {
     }
 
     @Test
-    void siBankApiNoRespondeReintentaYDevuelveFallback() throws Exception {
+    void siMsClientesNoRespondeReintentaYDevuelveFallback() throws Exception {
         when(bankClient.profile("mobile-token")).thenThrow(new ResourceAccessException("Connection refused"));
         when(bankClient.accounts("mobile-token")).thenReturn(List.of());
 

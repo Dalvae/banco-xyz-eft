@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <groupId>cl.duoc.bank</groupId>
-    <artifactId>bank-s8</artifactId>
+    <artifactId>bank-s9</artifactId>
     <version>1.0.0</version>
   </parent>
   <artifactId>shared</artifactId>
@@ -26,6 +26,20 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <!-- spring cloud: la config sale del config-server y los servicios se encuentran por eureka -->
+    <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-config</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+    </dependency>
+    <!-- traceId en los logs, asi se puede seguir una operacion por todos los servicios -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-tracing-bridge-brave</artifactId>
     </dependency>
     <!-- resilience4j (circuit breaker + retry), lo saque de la guia de la semana -->
     <dependency>

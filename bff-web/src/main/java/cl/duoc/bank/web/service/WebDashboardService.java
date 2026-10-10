@@ -29,10 +29,10 @@ public class WebDashboardService {
         this.aggregationExecutor = aggregationExecutor;
     }
 
-    @CircuitBreaker(name = "bankApi", fallbackMethod = "dashboardFallback")
-    @Retry(name = "bankApi")
+    @CircuitBreaker(name = "msCuentas", fallbackMethod = "dashboardFallback")
+    @Retry(name = "msCuentas")
     public WebDtos.Dashboard dashboard(String token) {
-        // perfil y cuentas no dependen entre si, asi que los pido al mismo tiempo
+        // perfil (ms-clientes) y cuentas (ms-cuentas) no dependen entre si, asi que los pido al mismo tiempo
         CompletableFuture<DomainDtos.Profile> profileCall = CompletableFuture.supplyAsync(
                 () -> bankClient.profile(token), aggregationExecutor);
         CompletableFuture<List<DomainDtos.Account>> accountsCall = CompletableFuture.supplyAsync(
@@ -44,21 +44,22 @@ public class WebDashboardService {
                 .map(account -> toAccount(account,
                         bankClient.movements(account.id(), 0, DASHBOARD_MOVEMENTS, token)))
                 .toList();
-        return new WebDtos.Dashboard(new WebDtos.Profile(profile.id(), profile.name()), accounts, false, null);
+        return new WebDtos.Dashboard(new WebDtos.Profile(profile.id(), profile.name(), profile.email(), profile.phone(),
+                profile.segment()), accounts, false, null);
     }
 
-    @CircuitBreaker(name = "bankApi", fallbackMethod = "movementsFallback")
-    @Retry(name = "bankApi")
+    @CircuitBreaker(name = "msCuentas", fallbackMethod = "movementsFallback")
+    @Retry(name = "msCuentas")
     public WebDtos.MovementPage movements(long accountId, int page, int size, String token) {
         return toMovementPage(bankClient.movements(accountId, page, size, token));
     }
 
-    // fallback: si bank-api esta caido el dashboard sale vacio con degraded=true en vez de un 500
+    // fallback: si los microservicios estan caidos el dashboard sale vacio con degraded=true en vez de un 500
     WebDtos.Dashboard dashboardFallback(String token, Throwable error) {
         if (error instanceof ResponseStatusException e) {
-            throw e; // un 403 o 404 no es caida de bank-api
+            throw e; // un 403 o 404 no es caida del servicio
         }
-        LOG.warn("bank-api no responde, dashboard degradado: {}", error.toString());
+        LOG.warn("ms-cuentas/ms-clientes no responde, dashboard degradado: {}", error.toString());
         return new WebDtos.Dashboard(null, List.of(), true, "No pudimos conectar con el banco, intenta en unos segundos");
     }
 
@@ -66,13 +67,13 @@ public class WebDashboardService {
         if (error instanceof ResponseStatusException e) {
             throw e;
         }
-        LOG.warn("bank-api no responde al pedir movimientos: {}", error.toString());
+        LOG.warn("ms-cuentas no responde al pedir movimientos: {}", error.toString());
         throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Movimientos no disponibles por ahora");
     }
 
     private WebDtos.Account toAccount(DomainDtos.Account account, DomainDtos.MovementPage movements) {
         return new WebDtos.Account(account.id(), account.displayName(), account.maskedNumber(),
-                account.currency(), account.balance(), account.origin(), toMovementPage(movements));
+                account.currency(), account.balance(), account.status(), account.origin(), toMovementPage(movements));
     }
 
     private WebDtos.MovementPage toMovementPage(DomainDtos.MovementPage page) {

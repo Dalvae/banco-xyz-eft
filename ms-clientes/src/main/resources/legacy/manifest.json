@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/KariVillagran/bank_legacy_data",
+  "commit": "ef9c7bb1c5a820b1a24220d482d1a85149cb4cbe",
+  "files": [
+    {
+      "file": "intereses.csv",
+      "url": "https://raw.githubusercontent.com/KariVillagran/bank_legacy_data/ef9c7bb1c5a820b1a24220d482d1a85149cb4cbe/data/semana_3/intereses.csv",
+      "sha256": "69cc39f468db47e4d752657db95ee9caf00ebcaf31581e45e104c4dc4a5e3120",
+      "bytes": 29854,
+      "matches_previous_local": true
+    }
+  ]
+}

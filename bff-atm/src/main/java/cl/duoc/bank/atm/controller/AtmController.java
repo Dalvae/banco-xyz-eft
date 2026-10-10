@@ -33,10 +33,19 @@ public class AtmController {
 
     @PostMapping("/{id}/retiros")
     @PreAuthorize("hasAuthority('SCOPE_atm:withdraw')")
-    public AtmDtos.WithdrawalResult withdraw(@PathVariable long id,
+    public AtmDtos.OperationResult withdraw(@PathVariable long id,
             @RequestHeader("Idempotency-Key") @NotBlank String idempotencyKey,
             @Valid @RequestBody AtmDtos.Withdrawal request,
             @AuthenticationPrincipal Jwt jwt) {
         return service.withdraw(id, request, idempotencyKey, jwt.getTokenValue());
+    }
+
+    @PostMapping("/{id}/depositos")
+    @PreAuthorize("hasAuthority('SCOPE_atm:deposit')")
+    public AtmDtos.OperationResult deposit(@PathVariable long id,
+            @RequestHeader("Idempotency-Key") @NotBlank String idempotencyKey,
+            @Valid @RequestBody AtmDtos.Deposit request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return service.deposit(id, request, idempotencyKey, jwt.getTokenValue());
     }
 }

@@ -31,24 +31,34 @@ class AtmControllerTest {
     @Test
     void saldoYRetiro() throws Exception {
         when(bankClient.balance(101, "atm-token")).thenReturn(new DomainDtos.Account(101, "demo",
-                "Cuenta corriente", "****0101", "CLP", new BigDecimal("1000000"), "fixture"));
+                "Cuenta corriente", "****0101", "CLP", new BigDecimal("1000000"), "ABIERTA", "fixture"));
         mvc.perform(get("/api/atm/cuentas/101/saldo").with(atm("SCOPE_atm:balance")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.availableBalance").value(1000000));
 
-        DomainDtos.WithdrawalRequest pedido = new DomainDtos.WithdrawalRequest(new BigDecimal("10000"));
-        when(bankClient.withdraw(101, pedido, "key-1", "atm-token")).thenReturn(new DomainDtos.WithdrawalReceipt("op-1",
-                101, new BigDecimal("10000"), new BigDecimal("990000"), "CLP"));
+        DomainDtos.OperationRequest pedido = new DomainDtos.OperationRequest(101L, null, null, new BigDecimal("10000"));
+        when(bankClient.withdraw(pedido, "key-1", "atm-token")).thenReturn(new DomainDtos.Receipt("op-1", "RETIRO",
+                101L, null, new BigDecimal("10000"), new BigDecimal("990000"), "COMPLETADA", null));
         mvc.perform(post("/api/atm/cuentas/101/retiros").with(atm("SCOPE_atm:withdraw"))
                         .header("Idempotency-Key", "key-1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":10000}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.availableBalance").value(990000));
-        verify(bankClient).withdraw(101, pedido, "key-1", "atm-token");
+        verify(bankClient).withdraw(pedido, "key-1", "atm-token");
+
+        // deposito: va como toAccount
+        DomainDtos.OperationRequest deposito = new DomainDtos.OperationRequest(null, 101L, null, new BigDecimal("5000"));
+        when(bankClient.deposit(deposito, "key-2", "atm-token")).thenReturn(new DomainDtos.Receipt("op-2", "DEPOSITO",
+                null, 101L, new BigDecimal("5000"), null, "COMPLETADA", null));
+        mvc.perform(post("/api/atm/cuentas/101/depositos").with(atm("SCOPE_atm:deposit"))
+                        .header("Idempotency-Key", "key-2")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETADA"));
     }
 
     @Test
-    void sinBankApiElCajeroResponde503() throws Exception {
+    void sinMsCuentasElCajeroResponde503() throws Exception {
         when(bankClient.balance(101, "atm-token")).thenThrow(new ResourceAccessException("Connection refused"));
         mvc.perform(get("/api/atm/cuentas/101/saldo").with(atm("SCOPE_atm:balance")))
                 .andExpect(status().isServiceUnavailable());

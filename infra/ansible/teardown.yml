@@ -1,0 +1,36 @@
+---
+# borra todo para no dejar gasto corriendo
+- name: teardown
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    group/aws:
+      region: "{{ aws_region }}"
+  tasks:
+    - name: terminar la instancia
+      amazon.aws.ec2_instance:
+        filters:
+          "tag:Project": "{{ project_name }}"
+          instance-state-name: [pending, running, stopped, stopping]
+        state: absent
+        wait: true
+
+    - name: borrar security group
+      amazon.aws.ec2_security_group:
+        name: "{{ sg_name }}"
+        state: absent
+
+    - name: borrar key pair
+      amazon.aws.ec2_key:
+        name: "{{ key_name }}"
+        state: absent
+      when: crear_key | bool
+
+    - name: borrar llave local e inventario
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ key_file if crear_key | bool else playbook_dir + '/inventory.ini' }}"
+        - "{{ playbook_dir }}/inventory.ini"

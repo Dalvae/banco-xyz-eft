@@ -28,8 +28,8 @@ public class MobileHomeService {
         this.aggregationExecutor = aggregationExecutor;
     }
 
-    @CircuitBreaker(name = "bankApi", fallbackMethod = "homeFallback")
-    @Retry(name = "bankApi")
+    @CircuitBreaker(name = "msCuentas", fallbackMethod = "homeFallback")
+    @Retry(name = "msCuentas")
     public MobileDtos.Home home(String token) {
         CompletableFuture<DomainDtos.Profile> profileCall = CompletableFuture.supplyAsync(
                 () -> bankClient.profile(token), aggregationExecutor);
@@ -45,12 +45,12 @@ public class MobileHomeService {
         return new MobileDtos.Home(profile.name(), accounts, false, null);
     }
 
-    // si bank-api esta abajo la app muestra el inicio vacio con un aviso
+    // si ms-cuentas o ms-clientes estan abajo la app muestra el inicio vacio con un aviso
     MobileDtos.Home homeFallback(String token, Throwable error) {
         if (error instanceof ResponseStatusException e) {
             throw e;
         }
-        LOG.warn("bank-api no responde, inicio movil degradado: {}", error.toString());
+        LOG.warn("microservicios no responden, inicio movil degradado: {}", error.toString());
         return new MobileDtos.Home(null, List.of(), true, "Servicio temporalmente no disponible");
     }
 

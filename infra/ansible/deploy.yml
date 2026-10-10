@@ -1,0 +1,74 @@
+---
+# instala docker en la ec2 y levanta todo el compose
+- name: desplegar banco xyz
+  hosts: banco
+  become: true
+  tasks:
+    - name: paquetes (docker y git)
+      ansible.builtin.dnf:
+        name: [docker, git]
+        state: present
+
+    - name: docker corriendo
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: plugin de compose (no viene en los repos de al2023, bajo el binario)
+      ansible.builtin.get_url:
+        url: https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64
+        dest: /usr/local/lib/docker/cli-plugins/docker-compose
+        mode: "0755"
+      tags: compose
+
+    - name: ec2-user al grupo docker
+      ansible.builtin.user:
+        name: "{{ ssh_user }}"
+        groups: docker
+        append: true
+
+    - name: clonar el repo
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ repo_branch }}"
+        force: true
+
+    - name: revisar que las claves vengan (vault o -e)
+      ansible.builtin.assert:
+        that:
+          - demo_password | length > 0
+          - ops_client_secret | length > 0
+        fail_msg: "faltan claves, usa -e @vault.yml --ask-vault-pass"
+
+    - name: generar .env
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ app_dir }}/.env"
+        mode: "0600"
+      no_log: true
+
+    - name: docker compose up (con scale de ms-cuentas)
+      ansible.builtin.command:
+        cmd: docker compose up -d --build --scale ms-cuentas={{ cuentas_replicas }}
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    - name: esperar el healthcheck del gateway
+      ansible.builtin.uri:
+        url: "https://localhost:{{ gateway_port }}{{ gateway_health_path }}"
+        validate_certs: false
+        status_code: 200
+      register: health
+      retries: 40
+      delay: 15
+      until: health.status == 200
+
+    - name: smoke test desde mi compu
+      ansible.builtin.uri:
+        url: "https://{{ inventory_hostname }}:{{ gateway_port }}{{ gateway_health_path }}"
+        validate_certs: false
+        status_code: 200
+      delegate_to: localhost
+      become: false

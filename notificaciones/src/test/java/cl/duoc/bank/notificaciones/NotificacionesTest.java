@@ -8,7 +8,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import cl.duoc.bank.shared.Eventos.RetiroRealizado;
+import cl.duoc.bank.shared.Eventos.AlertaSeguridad;
+import cl.duoc.bank.shared.Eventos.TransaccionCompletada;
 import java.math.BigDecimal;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -19,36 +20,39 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 
-// sin kafka de verdad: llamo el listener directo con el evento que mandaria bank-api
-@SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:notif-test",
-        "spring.kafka.listener.auto-startup=false"
-})
+// sin kafka de verdad: llamo los listeners directo con los eventos que mandaria ms-pagos
+@SpringBootTest
 @AutoConfigureMockMvc
 class NotificacionesTest {
-    @Autowired MovimientosListener listener;
+    @Autowired EventosListener listener;
     @Autowired MockMvc mvc;
 
     @Test
-    void guardaLaNotificacionDelRetiro() throws Exception {
+    void guardaTransaccionesYAlertasSinRepetir() throws Exception {
         Acknowledgment ack = mock(Acknowledgment.class);
-        listener.onMovimiento(new RetiroRealizado("op-1", 101, "demo", new BigDecimal("5000.00"),
-                new BigDecimal("995000.00"), Instant.parse("2026-10-03T12:00:00Z")), ack);
-        verify(ack).acknowledge();
+        TransaccionCompletada retiro = new TransaccionCompletada("op-1", "RETIRO", 101L, null, "demo",
+                new BigDecimal("5000.00"), new BigDecimal("995000.00"), "CAJERO", Instant.parse("2026-10-10T12:00:00Z"));
+        listener.onTransaccion(retiro, ack);
+        listener.onTransaccion(retiro, ack); // repetido
+        listener.onAlerta(new AlertaSeguridad("al-1", "MONTO_ALTO", "demo", 101L, "RETIRO por $180000", Instant.now()), ack);
 
-        mvc.perform(get("/api/notificaciones").with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_notificaciones:read"))))
+        var ops = jwt().authorities(new SimpleGrantedAuthority("SCOPE_notificaciones:read"));
+        mvc.perform(get("/api/notificaciones").with(ops))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+        mvc.perform(get("/api/notificaciones").param("topico", "banco.alertas-seguridad").with(ops))
                 .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].CUENTA_ID").value(101));
+                .andExpect(jsonPath("$[0].tipo").value("MONTO_ALTO"));
+        verify(ack, org.mockito.Mockito.times(3)).acknowledge();
     }
 
     @Test
     void pausarYReanudarElListener() throws Exception {
         var admin = jwt().authorities(new SimpleGrantedAuthority("SCOPE_notificaciones:admin"));
-        mvc.perform(post("/api/kafka-listener/pausar").with(admin)).andExpect(jsonPath("$.estado").value("pausado"));
-        mvc.perform(post("/api/kafka-listener/reanudar").with(admin)).andExpect(jsonPath("$.estado").value("activo"));
+        mvc.perform(post("/api/notificaciones/listeners/alertasListener/pausar").with(admin)).andExpect(jsonPath("$.estado").value("pausado"));
+        mvc.perform(post("/api/notificaciones/listeners/alertasListener/reanudar").with(admin)).andExpect(jsonPath("$.estado").value("activo"));
         // con el scope de lectura no alcanza
-        mvc.perform(post("/api/kafka-listener/pausar")
+        mvc.perform(post("/api/notificaciones/listeners/alertasListener/pausar")
                         .with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_notificaciones:read"))))
                 .andExpect(status().isForbidden());
     }

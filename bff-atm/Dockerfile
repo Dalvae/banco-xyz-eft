@@ -11,5 +11,5 @@ RUN mvn -q -pl bff-atm -am package -DskipTests
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 COPY --from=build /src/bff-atm/target/bff-atm-1.0.0.jar app.jar
-EXPOSE 8443
+EXPOSE 8444
 ENTRYPOINT ["java", "-jar", "app.jar"]

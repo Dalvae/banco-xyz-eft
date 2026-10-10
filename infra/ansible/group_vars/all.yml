@@ -1,0 +1,36 @@
+# variables comunes de los 3 playbooks
+aws_region: us-east-1
+instance_type: t3.large      # el stack necesita ~8 GB de ram
+volume_size_gb: 30
+project_name: banco-xyz-eft
+# key pair: por defecto creo uno propio. en learner lab se puede usar el que ya existe:
+#   -e key_name=vockey -e crear_key=false -e key_file=~/.ssh/labsuser.pem
+crear_key: true
+key_name: "{{ project_name }}-key"
+key_file: "~/.ssh/{{ key_name }}.pem"
+sg_name: "{{ project_name }}-sg"
+
+# perfil de instancia opcional (no creo roles iam). en learner lab: -e instance_profile=LabInstanceProfile
+instance_profile: ""
+
+# ami de amazon linux 2023 (se busca en ssm, asi no hay que hardcodear el id)
+ami_ssm_param: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+ssh_user: ec2-user
+
+# mi_ip se pasa por -e (ej: -e mi_ip=1.2.3.4/32), no la dejo fija en el repo
+mi_ip: ""
+
+# puertos (ojo: el otro agente puede cambiar el del gateway en el compose)
+gateway_port: 8443
+gateway_health_path: /actuator/health
+
+repo_url: https://github.com/Dalvae/banco-xyz-eft
+repo_branch: main
+app_dir: /opt/banco-xyz
+
+# replicas de ms-cuentas para --scale
+cuentas_replicas: 2
+
+# claves: van en vault.yml (ansible-vault) o con -e, nunca aqui
+demo_password: "{{ vault_demo_password | default('') }}"
+ops_client_secret: "{{ vault_ops_client_secret | default('') }}"

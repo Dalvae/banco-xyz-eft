@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/KariVillagran/bank_legacy_data",
+  "commit": "ef9c7bb1c5a820b1a24220d482d1a85149cb4cbe",
+  "files": [
+    {
+      "file": "cuentas_anuales.csv",
+      "url": "https://raw.githubusercontent.com/KariVillagran/bank_legacy_data/ef9c7bb1c5a820b1a24220d482d1a85149cb4cbe/data/semana_3/cuentas_anuales.csv",
+      "sha256": "0690d81fe446affe39857a448ff5590c4f6e6f998150c08934db3aa41683e328",
+      "bytes": 40056,
+      "matches_previous_local": true
+    }
+  ]
+}
