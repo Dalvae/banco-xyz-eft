@@ -1,252 +1,171 @@
-# banco xyz - semana 8
+# banco xyz - eft desarrollo backend III
 
-repo: https://github.com/Dalvae/banco-xyz-bff-s5 (lo de la semana 5 quedo en el tag `semana-5`)
+repo: https://github.com/Dalvae/banco-xyz-eft
 
-sumativa 3 de backend III. sigo el proyecto de la semana 5 y 6 (bank-api + un bff por canal, con los datos de https://github.com/KariVillagran/bank_legacy_data) y le agregue lo que pide esta semana:
+evaluacion final transversal (PBY2203). junte lo que venia haciendo en el ramo: el proyecto spring batch de las semanas 1 a 3 y los microservicios de la semana 8 (auth-server, bff por canal, resilience4j, kafka), y le agregue lo que faltaba para que quede como una arquitectura de microservicios con spring cloud:
 
-- auth-server oauth2 (spring authorization server)
-- un Dockerfile por microservicio
-- docker-compose.yaml que levanta todo
-- resilience4j (circuit breaker + retry con fallback) en los bff
-- kafka: bank-api produce un evento por cada retiro y notificaciones lo consume
+- bank-api (que era un monolito chico) lo separe en **ms-cuentas**, **ms-pagos** y **ms-clientes**, cada uno con su base
+- **config-server** (spring cloud config, perfil native) con la config de todos en `config-repo/`
+- **eureka-server** para que los servicios se encuentren por nombre y se puedan tener varias replicas
+- **api-gateway** (spring cloud gateway) como unica entrada, en https, que reparte con `lb://`
+- el **batch** quedo como un modulo mas, con los csv de [fin_legacy_data](https://github.com/KariVillagran/fin_legacy_data) y reejecucion automatica si falla
+- un solo `docker-compose.yaml` que levanta todo (mysql, kafka, kafka-ui y los 12 servicios)
 
-## objetivo
+como se ejecuta y prueba cada cosa paso a paso esta en [instrucciones.md](instrucciones.md), y como se llevaria a aws en [despliegue.md](despliegue.md).
 
-preparar los microservicios del banco para la nube: que sean seguros (oauth2), que aguanten si un servicio se cae (resilience4j), que se avisen cosas por eventos (kafka) y que todo se levante con un solo `docker-compose up`.
-
-## propuesta tecnica
-
-la idea es que el banco funcione como microservicios que se pueden levantar en cualquier lado con docker:
-
-- en s5 el token lo daba bank-api con un endpoint hecho a mano. ahora hay un auth-server aparte y todos los demas servicios solo validan el token (resource servers).
-- los bff llaman a bank-api por http, si bank-api se cae el circuit breaker corta las llamadas y el bff responde un fallback en vez de quedarse colgado.
-- el retiro del cajero publica un evento en kafka, asi otro servicio (notificaciones) se entera sin que bank-api tenga que llamarlo. despues se podrian agregar otros consumidores (antifraude por ej) sin tocar bank-api.
-- elegi kafka y no jms porque es lo que usaba la guia y la semana 7.
+## arquitectura
 
 ```
-                   +-------------+
-  usuario/curl --> | auth-server | --(jwks)--> todos validan el token
-                   +-------------+
-  web    --> bff-web    -+
-  movil  --> bff-mobile -+--(resilience4j)--> bank-api --(RetiroRealizado)--> kafka --> notificaciones
-  cajero --> bff-atm    -+                                banco.movimientos
+                                  +-------------------+     +---------------+
+                                  |   config-server   |     | eureka-server |
+                                  |  :8888 (native,   |     |    :8761      |
+                                  |   config-repo/)   |     +---------------+
+                                  +-------------------+       ^ todos se registran
+                                     ^ todos piden su config   | y se buscan por nombre
+                                                               |
+ web / movil / cajero                                          |
+        |  https                                               |
+        v                                                      |
+ +--------------+   lb://bff-web     +-----------+             |
+ | api-gateway  | -----------------> |  bff-web  | --+         |
+ |  :8443 https | lb://bff-mobile    +-----------+   |  lb://  |
+ | (circuit     | -----------------> | bff-mobile| --+-------> ms-cuentas (x2) ---> mysql/cuentas
+ |  breaker +   | lb://bff-atm       +-----------+   |          ^   |
+ |  fallback)   | -----------------> |  bff-atm  | --+          |   +--> ms-clientes ---> mysql/clientes
+ +--------------+                    +-----------+   |          |
+        |                                            +-------> ms-pagos ---> mysql/pagos
+        | /oauth2, /login                                         |  (saga + outbox)
+        v                                                         v
+ +-------------+                                     kafka: banco.transacciones
+ | auth-server |  todos validan el jwt con /oauth2/jwks    banco.alertas-seguridad
+ |   :9000     |                                                  |
+ +-------------+                                                  v
+                                                           notificaciones ---> mysql/notificaciones
+
+ batch (one-shot): csv de fin_legacy_data ---> spring batch (3 jobs) ---> mysql/banco_xyz_batch
 ```
 
-| servicio | puerto | que hace |
-|---|---|---|
-| auth-server | 9000 | emite los tokens (authorization code + PKCE y client credentials) |
-| bank-api | 8440 (solo red interna) | cuentas, movimientos, retiros. **productor kafka** |
-| bff-web | 8441 | dashboard web |
-| bff-mobile | 8442 | inicio de la app |
-| bff-atm | 8443 | saldo y retiro del cajero |
-| notificaciones | 8450 | **consumidor kafka**, guarda un aviso por cada retiro |
-| kafka-1, kafka-2, kafka-3 | 9092 adentro, 19092/29092/39092 hacia el mac | cluster de 3 brokers en modo kraft |
-| kafka-ui | 8090 | pagina para ver brokers, topicos y consumidores |
+el flujo de un retiro en el cajero: `curl -k https://localhost:8443/api/atm/cuentas/101/retiros` -> el gateway lo manda a una instancia de bff-atm (por eureka) -> bff-atm valida el token (audiencia `bank-atm`, scope `atm:withdraw`) y llama a `ms-pagos` -> ms-pagos guarda la operacion, le pide el debito a `ms-cuentas` con su propio token client_credentials y deja el evento en el outbox -> el outbox lo publica en `banco.transacciones` (y en `banco.alertas-seguridad` si es de $150.000 o mas) -> notificaciones lo consume y lo guarda.
+
+## servicios y puertos
+
+| servicio | puerto | hacia afuera | que hace |
+|---|---|---|---|
+| api-gateway | 8443 | **si (https)** | unica entrada. rutas `lb://` a los bff, circuit breaker con fallback, tambien pasa `/oauth2` y `/login` al auth-server |
+| config-server | 8888 | si (con clave) | spring cloud config native, lee `config-repo/` |
+| eureka-server | 8761 | si | registro de servicios, en la pagina se ven las instancias |
+| auth-server | 9000 | no (por el gateway) | spring authorization server: tokens por canal y para servicios |
+| ms-cuentas | 8081 | no | **gestion de cuentas**: apertura, cierre, mantenimiento (renombrar), saldo y movimientos. dueno del saldo |
+| ms-pagos | 8082 | no | **procesamiento de pagos**: retiros, depositos, transferencias y pago de servicios. saga + outbox + productor kafka |
+| ms-clientes | 8083 | no | **gestion de clientes**: datos personales y perfil |
+| bff-web | 8441 | no | dashboard completo, movimientos, transferir, pagar, abrir/cerrar cuenta, editar perfil |
+| bff-mobile | 8442 | no | inicio liviano (nombre, cuentas y ultimos movimientos, nada mas) |
+| bff-atm | 8444 | no | saldo, retiro y deposito, respuestas minimas |
+| notificaciones | 8450 | no (por el gateway) | consumidor kafka de los 2 topicos |
+| batch | - | - | spring batch, corre un job y termina |
+| mysql | 3306 | no | un schema y un usuario por servicio |
+| kafka | 9092 / 19092 | 19092 | 1 broker kraft |
+| kafka-ui | 8090 | si | ver topicos, mensajes y consumidores |
+
+los 3 ms, los 3 bff y notificaciones no tienen `container_name` ni puerto publicado, asi se pueden escalar con `--scale`.
 
 ## estructura
 
 ```
-shared/          cosas comunes: cliente http a bank-api, config de seguridad, el evento de kafka
-auth-server/     spring authorization server (clientes y usuarios)
-bank-api/        dominio + importador csv + productor kafka (eventos/MovimientosProducer)
-bff-web/ bff-mobile/ bff-atm/   un bff por canal, el circuit breaker esta en los service
-notificaciones/  consumidor kafka + endpoint para ver lo que llego
-*/Dockerfile     uno por microservicio
+shared/          lo comun: cliente http con @LoadBalanced, seguridad (resource server), eventos kafka, dtos
+config-server/   spring cloud config
+config-repo/     la config de cada servicio (application.yml es la comun)
+eureka-server/   registro de servicios
+api-gateway/     spring cloud gateway con https
+auth-server/     oauth2 (spring authorization server)
+ms-cuentas/ ms-pagos/ ms-clientes/   los 3 microservicios
+bff-web/ bff-mobile/ bff-atm/        un bff por canal
+notificaciones/  consumidor kafka
+batch/           spring batch (3 jobs) + data/ con los csv de fin_legacy_data
+docker/mysql/    script que crea los schemas y usuarios
 docker-compose.yaml
-scripts/token.sh saca un token con curl
-evidencias/      capturas
+scripts/         token.sh (saca tokens con curl) y certificado.sh (keystore para correr local)
+infra/ansible/   playbook para el despliegue en ec2 (ver despliegue.md)
+evidencias/      salidas de terminal y capturas
 ```
 
-## como ejecutar
+## como ejecutar (resumen)
 
-necesitas docker con compose (yo use colima en mac, con `docker-compose`) y curl + openssl para el script del token. java no hace falta porque las imagenes compilan adentro.
+necesitas docker con compose (yo use colima con 8gb y 4 cpu) y curl + openssl. java no hace falta porque las imagenes compilan adentro.
 
 ```bash
 cp .env.example .env
-docker-compose up -d --build
-docker-compose ps     # esperar que los 3 kafka, auth-server y bank-api digan healthy (como 1 min)
+docker-compose --parallel 1 build    # de a una, asi maven compila una sola vez y las demas usan el cache
+docker-compose up -d
+docker-compose ps                    # esperar que todo diga healthy (2 a 3 min)
 ```
 
-para apagar `docker-compose down` (con `-v` borra las bases tambien).
+el detalle con todos los curl esta en [instrucciones.md](instrucciones.md).
 
-los tests corren con `mvn verify` si tienes java 21 y maven.
+los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en modo mysql y kafka mockeado).
 
-## probar
+## como se cubre cada requisito
 
-```bash
-# tokens del usuario demo, por authorization code + PKCE
-WEB=$(scripts/token.sh web)
-MOB=$(scripts/token.sh mobile)
-ATM=$(scripts/token.sh atm)
+### parte 1: batch
 
-curl -H "Authorization: Bearer $WEB" http://localhost:8441/api/web/me/dashboard
-curl -H "Authorization: Bearer $MOB" http://localhost:8442/api/mobile/me/inicio
-curl -H "Authorization: Bearer $ATM" http://localhost:8443/api/atm/cuentas/101/saldo
-curl -H "Authorization: Bearer $ATM" -H "Idempotency-Key: retiro-1" -H 'Content-Type: application/json' \
-     -d '{"amount":15000}' http://localhost:8443/api/atm/cuentas/101/retiros
+- **3 jobs** read/process/write: `transaccionesJob` (movimientos diarios, detecta anomalias y deja un resumen por dia), `interesesJob` (intereses trimestrales sobre ahorro y prestamos) y `estadoCuentaJob` (estados de cuenta anuales + reporte de auditoria). cada uno con `FlatFileItemReader` -> processor que normaliza y valida -> `JdbcBatchItemWriter`.
+- **excepciones y reintentos**: los datos malos (fecha invalida, monto vacio, tipo raro) se saltan con una `SkipPolicy` y quedan en la tabla `omitidos` y en un csv. los fallos temporales de la bd (`TransientDataAccessException`) se reintentan 3 veces con backoff exponencial.
+- **volumen**: cada job esta particionado (`CsvPartitioner`), las particiones corren en paralelo en un pool de hilos y el writer usa batch inserts (`rewriteBatchedStatements`).
+- **finalizacion y reejecucion automatica**: si un job descarta mas registros que su umbral queda FAILED (y el contenedor sale con codigo 1). si un step falla por algo critico, `ReejecucionRunner` relanza el job con los mismos parametros, que para spring batch es un restart: sigue desde la particion/chunk que fallo sin repetir lo que ya estaba escrito. hasta 3 intentos con espera creciente. y si el proceso entero se muere, al volver a partir retoma la ejecucion que quedo FAILED (en compose tiene `restart: on-failure:3`). se puede ver con `--batch.demo.falla-critica=true`.
+- los csv de fin_legacy_data estan en `batch/data/semana_1..3`, por defecto procesa `semana_3` (1000 filas por archivo).
 
-# token de servicio (client credentials) para ver las notificaciones que llegaron por kafka
-OPS=$(scripts/token.sh ops)
-curl -H "Authorization: Bearer $OPS" http://localhost:8450/api/notificaciones
-```
+### parte 2: bff
 
-## por criterio
+- **bff-web**: datos completos (perfil, todas las cuentas con saldo, movimientos paginados, operaciones) y las operaciones de escritura.
+- **bff-mobile**: una sola llamada `/me/inicio` con lo esencial, sin datos personales extra.
+- **bff-atm**: solo saldo, retiro y deposito. no devuelve nombres ni movimientos. el retiro no se reintenta (es plata) y lleva `Idempotency-Key`.
+- **auth por canal**: cada canal es un cliente distinto en el auth-server (`bank-web`, `bank-mobile`, `bank-atm`) con sus propios scopes. cada bff solo acepta tokens con su audiencia, asi el token del celular no sirve en el cajero (401), y cada endpoint pide su scope con `@PreAuthorize` (403 si no lo tiene).
+- **https y tokens**: el gateway es la unica entrada y va en https con un certificado pkcs12 autofirmado que se genera en el Dockerfile (en local con `scripts/certificado.sh`). el login y los tokens tambien pasan por el gateway. adentro de la red de docker va en http (en aws el https lo termina el alb con acm).
+- los bff son independientes: cada uno su modulo, su imagen y su config.
 
-### oauth2
+### parte 3: microservicios con spring cloud
 
-- `auth-server` con spring authorization server. clientes:
-  - `bank-web`, `bank-mobile`, `bank-atm`: authorization code con PKCE (son publicos, no guardan secreto)
-  - `ops-notificaciones`: client credentials (servicio, sin usuario)
-- usuarios `demo` (cuenta 101) y `other` (cuenta 102), la clave va en `.env`
-- bank-api, los bff y notificaciones son resource servers: validan firma con `/oauth2/jwks`, el issuer y la audiencia (cada bff solo acepta tokens de su cliente). cada endpoint pide su scope con `@PreAuthorize` y bank-api revisa que la cuenta sea del usuario.
-- metadata en http://localhost:9000/.well-known/openid-configuration
-- sin token da 401, token de otro canal 401 (audiencia), cuenta ajena 403
-
-### dockerfile
-
-uno por servicio (`auth-server/`, `bank-api/`, `bff-web/`, `bff-mobile/`, `bff-atm/`, `notificaciones/`). multi-stage: con `maven:3.9-eclipse-temurin-21` compilo y la imagen final es `eclipse-temurin:21-jre-alpine` con el jar no mas. el contexto es la raiz porque todos necesitan el pom padre.
-
-### docker-compose
-
-- 10 contenedores: 3 brokers kafka, kafka-ui, auth-server, bank-api, 3 bff y notificaciones, en la red `banco-net`
-- se llaman por nombre (`http://bank-api:8440`, `kafka-1:9092,kafka-2:9092,kafka-3:9092`)
-- healthcheck en los kafka, auth-server y bank-api, y `depends_on` con `service_healthy` para que partan en orden
-- `restart: unless-stopped`, volumenes para las bases h2, claves en `.env` (hay un `.env.example`)
-- adentro de la red todo va en http, en s5 tenia https con certificados locales pero en docker se complicaba mucho
-
-### resilience4j
-
-- en los service de cada bff: `@CircuitBreaker` + `@Retry` con la instancia `bankApi` y un fallback
-- circuit breaker: ventana de 10 llamadas, se abre con 50% de fallas (minimo 4), espera 15s y pasa a half-open solo
-- retry: 3 intentos cada 500ms, solo si bank-api no responde o da 5xx. el retiro del cajero no se reintenta a proposito (es plata)
-- fallback: web y movil responden 200 con `"degraded": true`, el cajero responde 503
-- estado en `/actuator/circuitbreakers` y `/actuator/circuitbreakerevents`
-
-```bash
-curl http://localhost:8441/actuator/circuitbreakers     # CLOSED
-docker-compose stop bank-api
-for i in 1 2 3 4 5; do curl -s -H "Authorization: Bearer $WEB" http://localhost:8441/api/web/me/dashboard; echo; done
-curl http://localhost:8441/actuator/circuitbreakers     # OPEN
-docker-compose start bank-api
-# a los 15s pasa a HALF_OPEN y con 2 llamadas buenas vuelve a CLOSED
-```
-
-### kafka
-
-- productor: bank-api (`MovimientosProducer`). cada retiro manda un `RetiroRealizado` al topico `banco.movimientos` (key = id de la cuenta)
-- si kafka esta caido el retiro no se pierde ni el evento tampoco (outbox): el retiro guarda el evento en la tabla `evento_pendiente` en la misma transaccion, y cada 5s `MovimientosProducer` manda los que faltan. si kafka no responde quedan ahi y se reintentan solos cuando vuelve
-- como un evento puede llegar 2 veces (se reintenta), notificaciones tiene `operation_id` unico y los repetidos los salta
-- consumidor: notificaciones (`MovimientosListener`, grupo `notificaciones`), guarda la notificacion en su h2
-- la config esta armada como en la clase de la semana 8:
-  - `bank-api/.../eventos/KafkaProducerConfig`: `ProducerFactory` con `StringSerializer` para la key y `JsonSerializer` para el evento, el `KafkaTemplate` y el `NewTopic` (lo crea el `KafkaAdmin` de spring boot)
-  - `notificaciones/.../KafkaConsumerConfig`: `ConsumerFactory` con `JsonDeserializer` y `ConcurrentKafkaListenerContainerFactory` con ack manual
-  - `notificaciones/.../KafkaListenerController`: pausar / reanudar / ver estado del listener con el `KafkaListenerEndpointRegistry`, pide el scope `notificaciones:admin`
-
-para ver que funciona entro a kafka-ui en http://localhost:8090, ahi se ven los brokers, el topico con sus particiones, los mensajes que van llegando y el lag del consumidor
-
-como en la clase deje un cluster de 3 brokers:
-
-- `kafka-1`, `kafka-2` y `kafka-3`, los 3 son broker y controller (kraft, sin zookeeper). la config comun esta una vez arriba del compose (`x-kafka-comun`)
-- `banco.movimientos` tiene 3 particiones y replication factor 3
-- `min.insync.replicas=2` y el productor con `acks=all`, asi si se cae 1 broker se sigue escribiendo
-
-si el pc no da para levantar todo, se puede subir solo kafka con `docker-compose up -d kafka-1 kafka-2 kafka-3 kafka-ui` y correr los microservicios desde el ide, ya vienen apuntando a `localhost:19092,localhost:29092,localhost:39092`
+- **3 microservicios** con su propia base (database per service: schema y usuario de mysql distintos, ms-pagos no puede leer las tablas de ms-cuentas).
+- **spring cloud config**: `config-server` con perfil native. cada servicio solo tiene su nombre y puerto en el `application.properties`, lo demas (bd, eureka, seguridad, resilience4j, rutas del gateway) sale de `config-repo/`.
+- **eureka**: todos se registran, y se llaman por nombre (`http://ms-cuentas`, `lb://bff-web`).
+- **balanceo y enrutamiento**: spring cloud gateway enruta por path a cada bff y spring cloud loadbalancer reparte entre las instancias (gateway -> bff y bff/ms-pagos -> ms-cuentas con `@LoadBalanced`). con `--scale ms-cuentas=2` se ven las 2 en eureka y en los logs las 2 atienden.
+- **oauth2**: auth-server con spring authorization server, authorization code + PKCE para los canales y client credentials para servicio a servicio (ms-pagos -> ms-cuentas con el scope `cuentas:operar`, que ningun canal tiene). todos los servicios son resource servers.
+- **resilience4j y fallback**: circuit breaker + retry en los bff (si ms-cuentas se cae la web y el movil responden con `degraded: true` y el cajero da 503), en ms-pagos hacia ms-cuentas, en ms-cuentas hacia ms-clientes, y en el gateway si se cae un bff entero.
+- **kafka**: topicos `banco.transacciones` (transaccion completada) y `banco.alertas-seguridad` (monto alto o 3 rechazos seguidos en 10 min). productor: ms-pagos con outbox. consumidor: notificaciones con ack manual y sin duplicados.
+- **consistencia**: no hay transacciones distribuidas, es una saga: ms-pagos guarda la operacion, pide debito y credito a ms-cuentas (idempotentes por operationId) y si el credito falla pide la reversa del debito. si ms-cuentas no responde para revertir, la operacion queda `COMPENSACION_PENDIENTE` y un reconciliador la termina cada 15s. el evento se guarda en la misma transaccion que cierra la operacion (outbox), asi nunca se publica algo que no paso ni se pierde algo que si.
+- **monitoreo**: actuator en todos (`health`, `metrics`, `circuitbreakers`), traceId/spanId en los logs (micrometer tracing) para seguir una operacion por varios servicios, y kafka-ui.
+- **escalado horizontal**: ms-*, bff-* y notificaciones se escalan con `--scale`. probado con 2 replicas de ms-cuentas.
+- **docker / aws**: un Dockerfile por servicio y un compose. el despliegue a aws (ecr, ecs fargate o ec2, msk, rds, alb con acm, secrets manager, cloudwatch, autoescalado) esta en [despliegue.md](despliegue.md), con un playbook de ansible en `infra/ansible/` para el camino ec2.
 
 ## evidencias
 
-las capturas de consola son de mi terminal (kitty): a la izquierda `docker-compose up --attach bank-api --attach notificaciones` con los logs en vivo y a la derecha los comandos. las de kafka-ui son del navegador. estan en [evidencias/capturas](evidencias/capturas/).
+salidas reales de mi terminal en [evidencias/](evidencias/) (todas del 2026-10-10, con el compose arriba en colima):
 
-### 1. dockerfiles e imagenes
+| archivo | que muestra |
+|---|---|
+| `00-mvn-package.txt` | `mvn package` en verde, 34 tests en 13 modulos |
+| `01-e2e.txt` | tokens por el gateway, los 3 bff, 401/403 por canal, retiro, deposito, transferencia, pago, saga que devuelve la plata, idempotencia, abrir/cerrar cuenta, perfil, notificaciones y el grupo de consumidores de kafka |
+| `02-resilience4j-fallback.txt` | ms-cuentas caido: reintentos, circuito OPEN, fallback degradado en web/movil, 503 en el cajero, HALF_OPEN y CLOSED al volver; fallback del gateway con bff-atm caido |
+| `03-escalado-eureka.txt` | `--scale ms-cuentas=2`, las 2 instancias en eureka y las llamadas repartidas 6/5 entre las 2 |
+| `04-batch.txt` | los 3 jobs como contenedor one-shot, conteos en mysql y la reejecucion automatica (FAILED -> restart de la misma instancia -> COMPLETED) |
+| `05-docker-stats.txt` | memoria de todo arriba (unos 2,9 GB con 2 replicas de ms-cuentas) |
 
-un Dockerfile por microservicio (multi-stage, compila con maven y deja solo el jar) y las 6 imagenes construidas.
+capturas en [evidencias/capturas/](evidencias/capturas/):
 
-![dockerfiles](evidencias/capturas/01-docker-imagenes.png)
+![eureka con 2 instancias de ms-cuentas](evidencias/capturas/01-eureka-ms-cuentas-2-instancias.png)
 
-### 2. docker-compose arriba
+| | |
+|---|---|
+| ![broker](evidencias/capturas/02-kafka-ui-broker.png) | ![topicos](evidencias/capturas/03-kafka-ui-topicos.png) |
+| ![mensajes transacciones](evidencias/capturas/04-kafka-ui-mensajes-transacciones.png) | ![mensajes alertas](evidencias/capturas/05-kafka-ui-mensajes-alertas.png) |
+| ![consumidor](evidencias/capturas/06-kafka-ui-consumidor.png) | ![rutas del gateway](evidencias/capturas/09-gateway-rutas-https.png) |
+| ![config ms-pagos](evidencias/capturas/07-config-server-ms-pagos.png) | ![config api-gateway](evidencias/capturas/08-config-server-api-gateway.png) |
 
-los 10 contenedores corriendo, auth-server, bank-api y los kafka en healthy.
+![fallback](evidencias/capturas/10-resilience4j-fallback.png)
 
-![docker compose ps](evidencias/capturas/02-docker-compose-ps.png)
+## cosas que faltaron o simplifique
 
-### 3. auth-server
-
-la configuracion de openid y las llaves publicas (jwks) que usan los otros servicios para validar el token.
-
-![metadata oauth2](evidencias/capturas/03-oauth2-metadata-jwks.png)
-
-### 4. login oauth2
-
-al pedir un token con authorization code te manda al login del auth-server.
-
-![login](evidencias/capturas/04-oauth2-login-authorization-code.png)
-
-### 5. llamadas con y sin token
-
-con su token cada bff responde 200. sin token da 401, con el token de otro canal tambien 401 y si pido una cuenta que no es mia da 403.
-
-![llamadas 200 401 403](evidencias/capturas/06-oauth2-llamadas-200-401-403.png)
-
-### 6. evento de kafka
-
-hago un retiro en el cajero, bank-api publica el evento y notificaciones lo consume y lo guarda.
-
-![productor y consumidor](evidencias/capturas/07-kafka-evento-productor-consumidor.png)
-
-### 7. resilience4j: bank-api caido
-
-apago bank-api. las primeras llamadas se demoran por los reintentos, despues el circuito se abre y el bff responde el fallback al tiro. el cajero da 503.
-
-![circuito abierto](evidencias/capturas/09-resilience4j-circuito-abierto.png)
-
-### 8. resilience4j: se recupera
-
-vuelvo a levantar bank-api y el circuito pasa de OPEN a HALF_OPEN y despues a CLOSED.
-
-![recuperacion](evidencias/capturas/10-resilience4j-recuperacion.png)
-
-### 9. restart de docker
-
-mato el proceso de bff-mobile y docker lo vuelve a levantar solo por el `restart: unless-stopped`.
-
-![restart](evidencias/capturas/11-docker-restart-unless-stopped.png)
-
-### 10. tests
-
-`mvn verify` en verde.
-
-![tests](evidencias/capturas/12-mvn-verify.png)
-
-### 11. kafka-ui: brokers
-
-los 3 brokers arriba y ninguna replica fuera de sync.
-
-![brokers](evidencias/capturas/14a-kafka-ui-brokers.png)
-
-### 12. kafka-ui: topico
-
-el topico `banco.movimientos` con 3 particiones y 3 replicas.
-
-![topico](evidencias/capturas/14b-kafka-ui-topico.png)
-
-### 13. kafka-ui: mensajes
-
-hice 3 retiros en el cajero y aca se ven los 3 eventos que llegaron al topico.
-
-![mensajes](evidencias/capturas/14c-kafka-ui-mensajes.png)
-
-### 14. kafka-ui: consumidor
-
-el grupo `notificaciones` conectado y con lag 0, o sea ya leyo todos los mensajes.
-
-![consumidor](evidencias/capturas/14d-kafka-ui-consumidor.png)
-
-### 15. kafka caido
-
-congelo los 3 kafka con `docker-compose pause` y hago un retiro. el retiro funciona igual y el evento queda pendiente. cuando vuelve kafka el evento sale solo y notificaciones lo recibe, no se pierde nada.
-
-![kafka caido](evidencias/capturas/15-kafka-caido-outbox.png)
-
-## cosas que faltaron
-
-- la llave del auth-server se genera cada vez que parte, si se reinicia hay que pedir tokens de nuevo
-- usuarios y clientes en memoria
+- kafka quedo en 1 broker en docker (en s8 tenia 3). lo baje antes de medir para no arriesgarme con los 8gb de colima y 12 servicios java; al final todo arriba usa ~2,9 gb, asi que probablemente 3 brokers de 384m tambien cabian, pero no lo probe. en aws seria msk con 3.
+- un solo mysql con un schema por servicio, en aws seria un rds por servicio (o al menos usuarios separados como aca).
+- usuarios y clientes del auth-server en memoria, y la llave se genera al partir (si se reinicia hay que pedir tokens de nuevo).
+- el certificado es autofirmado, por eso los curl van con `-k`.
