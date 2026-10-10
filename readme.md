@@ -2,7 +2,7 @@
 
 repo: https://github.com/Dalvae/banco-xyz-eft
 
-evaluacion final transversal (PBY2203). junte lo que venia haciendo en el ramo: el proyecto spring batch de las semanas 1 a 3 y los microservicios de la semana 8 (auth-server, bff por canal, resilience4j, kafka), y le agregue lo que faltaba para que quede como una arquitectura de microservicios con spring cloud:
+evaluacion final transversal (PBY2203). este proyecto parte de lo que venia haciendo en el ramo (el spring batch de la sumativa 1, los bff de la semana 5 y los microservicios con kafka de la semana 8, cada uno en su propio repo); esos son solo antecedentes, la entrega es este repo. le agregue lo que faltaba para que quede como una arquitectura de microservicios con spring cloud:
 
 - bank-api (que era un monolito chico) lo separe en **ms-cuentas**, **ms-pagos** y **ms-clientes**, cada uno con su base
 - **config-server** (spring cloud config, perfil native) con la config de todos en `config-repo/`
@@ -10,6 +10,7 @@ evaluacion final transversal (PBY2203). junte lo que venia haciendo en el ramo: 
 - **api-gateway** (spring cloud gateway) como unica entrada, en https, que reparte con `lb://`
 - el **batch** quedo como un modulo mas, con los csv de [fin_legacy_data](https://github.com/KariVillagran/fin_legacy_data) y reejecucion automatica si falla
 - un solo `docker-compose.yaml` que levanta todo (mysql, kafka, kafka-ui y los 12 servicios)
+- kafka tambien puede correr en una **ec2 de aws** (playbook de ansible en `infra/ansible/`) y el compose local se conecta a ese broker
 
 como se ejecuta y prueba cada cosa paso a paso esta en [instrucciones.md](instrucciones.md), y como se llevaria a aws en [despliegue.md](despliegue.md).
 
@@ -64,8 +65,8 @@ el flujo de un retiro en el cajero: `curl -k https://localhost:8443/api/atm/cuen
 | notificaciones | 8450 | no (por el gateway) | consumidor kafka de los 2 topicos |
 | batch | - | - | spring batch, corre un job y termina |
 | mysql | 3306 | no | un schema y un usuario por servicio |
-| kafka | 9092 / 19092 | 19092 | 1 broker kraft |
-| kafka-ui | 8090 | si | ver topicos, mensajes y consumidores |
+| kafka | 9092 / 19092 | 19092 | 1 broker kraft (profile `kafka-local`). en la ec2 escucha en el 9094 |
+| kafka-ui | 8090 | si | ver topicos, mensajes y consumidores (profile `kafka-local`, y otro en la ec2) |
 
 los 3 ms, los 3 bff y notificaciones no tienen `container_name` ni puerto publicado, asi se pueden escalar con `--scale`.
 
@@ -82,7 +83,7 @@ ms-cuentas/ ms-pagos/ ms-clientes/   los 3 microservicios
 bff-web/ bff-mobile/ bff-atm/        un bff por canal
 notificaciones/  consumidor kafka
 batch/           spring batch (3 jobs) + data/ con los csv de fin_legacy_data
-docker/mysql/    script que crea los schemas y usuarios
+mysql/           script que crea los schemas y usuarios
 docker-compose.yaml
 scripts/         token.sh (saca tokens con curl) y certificado.sh (keystore para correr local)
 infra/ansible/   playbook para el despliegue en ec2 (ver despliegue.md)
@@ -91,7 +92,7 @@ evidencias/      salidas de terminal y capturas
 
 ## como ejecutar (resumen)
 
-necesitas docker con compose (yo use colima con 8gb y 4 cpu) y curl + openssl. java no hace falta porque las imagenes compilan adentro.
+necesitas docker con compose (yo use colima con 8gb y 4 cpu en un mac arm; todas las imagenes son multi-arquitectura, asi que en un linux x86_64 funciona igual) y curl + openssl. java no hace falta porque las imagenes compilan adentro. en mi mac el comando es `docker-compose`, en linux casi siempre es `docker compose`, da lo mismo.
 
 ```bash
 cp .env.example .env
@@ -100,7 +101,9 @@ docker-compose up -d
 docker-compose ps                    # esperar que todo diga healthy (2 a 3 min)
 ```
 
-el detalle con todos los curl esta en [instrucciones.md](instrucciones.md).
+por defecto el `.env` trae `COMPOSE_PROFILES=kafka-local` y se levanta kafka en local. para usar el kafka de la ec2 se saca esa linea y se pone `KAFKA_BOOTSTRAP=<ip>:9094` (ver [despliegue.md](despliegue.md)).
+
+el detalle con todos los curl esta en [instrucciones.md](instrucciones.md). para el video hay 2 scripts: `scripts/demo-resiliencia.sh` (retry, circuito OPEN, fallback y vuelta a CLOSED) y `scripts/evidencia-kafka-ec2.sh` (evidencia de kafka en la ec2).
 
 los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en modo mysql y kafka mockeado).
 
@@ -112,7 +115,8 @@ los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en mo
 - **excepciones y reintentos**: los datos malos (fecha invalida, monto vacio, tipo raro) se saltan con una `SkipPolicy` y quedan en la tabla `omitidos` y en un csv. los fallos temporales de la bd (`TransientDataAccessException`) se reintentan 3 veces con backoff exponencial.
 - **volumen**: cada job esta particionado (`CsvPartitioner`), las particiones corren en paralelo en un pool de hilos y el writer usa batch inserts (`rewriteBatchedStatements`).
 - **finalizacion y reejecucion automatica**: si un job descarta mas registros que su umbral queda FAILED (y el contenedor sale con codigo 1). si un step falla por algo critico, `ReejecucionRunner` relanza el job con los mismos parametros, que para spring batch es un restart: sigue desde la particion/chunk que fallo sin repetir lo que ya estaba escrito. hasta 3 intentos con espera creciente. y si el proceso entero se muere, al volver a partir retoma la ejecucion que quedo FAILED (en compose tiene `restart: on-failure:3`). se puede ver con `--batch.demo.falla-critica=true`.
-- los csv de fin_legacy_data estan en `batch/data/semana_1..3`, por defecto procesa `semana_3` (1000 filas por archivo).
+- se reutilizaron los componentes de spring batch de la sumativa 1 (readers, processors, writers, skip policy, particionado), adaptados a fin_legacy_data: el esquema de columnas es el mismo, cambian los nombres de archivo (`movimientos_financieros_diarios.csv`, `intereses_trimestrales.csv`, `estados_financieros_anuales.csv`), que se configuran en `application.properties` sin renombrar los csv. los tipos raros como `invalido` o `desconocido` caen en la omision `tipo_no_permitido`.
+- los csv estan en `batch/data/semana_1..3`, por defecto procesa `semana_3` (1000 filas por archivo). resultado con semana_3: transacciones 392 escritas / 608 descartadas (60,8 %, umbral 70 %), intereses 375 / 625 (62,5 %, umbral 85 %), estados de cuenta 604 / 396 (39,6 %, umbral 45 %). los umbrales de la sumativa 1 alcanzaron, no hubo que recalibrar.
 
 ### parte 2: bff
 
@@ -130,7 +134,7 @@ los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en mo
 - **eureka**: todos se registran, y se llaman por nombre (`http://ms-cuentas`, `lb://bff-web`).
 - **balanceo y enrutamiento**: spring cloud gateway enruta por path a cada bff y spring cloud loadbalancer reparte entre las instancias (gateway -> bff y bff/ms-pagos -> ms-cuentas con `@LoadBalanced`). con `--scale ms-cuentas=2` se ven las 2 en eureka y en los logs las 2 atienden.
 - **oauth2**: auth-server con spring authorization server, authorization code + PKCE para los canales y client credentials para servicio a servicio (ms-pagos -> ms-cuentas con el scope `cuentas:operar`, que ningun canal tiene). todos los servicios son resource servers.
-- **resilience4j y fallback**: circuit breaker + retry en los bff (si ms-cuentas se cae la web y el movil responden con `degraded: true` y el cajero da 503), en ms-pagos hacia ms-cuentas, en ms-cuentas hacia ms-clientes, y en el gateway si se cae un bff entero.
+- **resilience4j y fallback**: config en `config-repo/application.yml`: ventana de 10 llamadas, minimo 4, se abre con 50 % de fallas por 15s, y retry de 3 intentos cada 100 ms solo ante errores de conexion o 5xx. circuit breaker + retry en los bff (si ms-cuentas se cae la web y el movil responden con `degraded: true` y el cajero da 503), en ms-pagos hacia ms-cuentas, en ms-cuentas hacia ms-clientes, y en el gateway si se cae un bff entero.
 - **kafka**: topicos `banco.transacciones` (transaccion completada) y `banco.alertas-seguridad` (monto alto o 3 rechazos seguidos en 10 min). productor: ms-pagos con outbox. consumidor: notificaciones con ack manual y sin duplicados.
 - **consistencia**: no hay transacciones distribuidas, es una saga: ms-pagos guarda la operacion, pide debito y credito a ms-cuentas (idempotentes por operationId) y si el credito falla pide la reversa del debito. si ms-cuentas no responde para revertir, la operacion queda `COMPENSACION_PENDIENTE` y un reconciliador la termina cada 15s. el evento se guarda en la misma transaccion que cierra la operacion (outbox), asi nunca se publica algo que no paso ni se pierde algo que si.
 - **monitoreo**: actuator en todos (`health`, `metrics`, `circuitbreakers`), traceId/spanId en los logs (micrometer tracing) para seguir una operacion por varios servicios, y kafka-ui.
@@ -149,6 +153,10 @@ salidas reales de mi terminal en [evidencias/](evidencias/) (todas del 2026-10-1
 | `03-escalado-eureka.txt` | `--scale ms-cuentas=2`, las 2 instancias en eureka y las llamadas repartidas 6/5 entre las 2 |
 | `04-batch.txt` | los 3 jobs como contenedor one-shot, conteos en mysql y la reejecucion automatica (FAILED -> restart de la misma instancia -> COMPLETED) |
 | `05-docker-stats.txt` | memoria de todo arriba (unos 2,9 GB con 2 replicas de ms-cuentas) |
+| `resiliencia.txt` | salida de `scripts/demo-resiliencia.sh`: CLOSED, ms-cuentas apagado, 3 intentos en `/actuator/retryevents`, OPEN con fallback, HALF_OPEN y CLOSED |
+| `batch-transacciones.txt`, `batch-intereses.txt`, `batch-estadoCuenta.txt` | las lineas del `BatchMetricsListener` de cada job (leidos, escritos, descartados, tasa de omision) |
+| `kafka-ec2-simulado-local.txt` | prueba del modo "kafka en la nube" en mi mac: sin el profile kafka-local, con un kafka aparte armado con la plantilla del playbook y anunciado por ip. el productor y el consumidor usan `KAFKA_BOOTSTRAP=<ip>:9094` |
+| `kafka-ec2.txt` | (lo genera `scripts/evidencia-kafka-ec2.sh` contra la ec2 de verdad) |
 
 capturas en [evidencias/capturas/](evidencias/capturas/):
 
@@ -163,9 +171,13 @@ capturas en [evidencias/capturas/](evidencias/capturas/):
 
 ![fallback](evidencias/capturas/10-resilience4j-fallback.png)
 
+![circuito abierto](evidencias/capturas/11-circuitbreakers-open.png)
+
 ## cosas que faltaron o simplifique
 
-- kafka quedo en 1 broker en docker (en s8 tenia 3). lo baje antes de medir para no arriesgarme con los 8gb de colima y 12 servicios java; al final todo arriba usa ~2,9 gb, asi que probablemente 3 brokers de 384m tambien cabian, pero no lo probe. en aws seria msk con 3.
+- kafka quedo en 1 broker (en s8 tenia 3), igual que el de la ec2. lo baje antes de medir para no arriesgarme con los 8gb de colima y 12 servicios java; al final todo arriba usa ~2,9 gb, asi que probablemente 3 brokers tambien cabian, pero no lo probe.
+- en aws solo esta kafka (lo pidio el profe asi), el resto corre local. el camino completo a ecs/rds/msk quedo como mejora en despliegue.md.
+- las bases son mysql (un schema por servicio). los tests usan h2 en modo mysql para no necesitar docker.
 - un solo mysql con un schema por servicio, en aws seria un rds por servicio (o al menos usuarios separados como aca).
 - usuarios y clientes del auth-server en memoria, y la llave se genera al partir (si se reinicia hay que pedir tokens de nuevo).
 - el certificado es autofirmado, por eso los curl van con `-k`.

@@ -1,6 +1,6 @@
 # instrucciones: como levantar y probar cada parte
 
-todo lo de aca lo corri en mi mac con colima (4 cpu, 8gb) y `docker-compose` 5.5. las salidas reales estan en [evidencias/](evidencias/).
+todo lo de aca lo corri en mi mac con colima (4 cpu, 8gb) y `docker-compose` 5.5. las salidas reales estan en [evidencias/](evidencias/). en linux el comando suele ser `docker compose` (con espacio), funciona igual; los scripts detectan cual hay.
 
 ## 0. requisitos
 
@@ -21,6 +21,7 @@ docker-compose ps             # esperar que todos digan (healthy), menos kafka-u
 - el `build` va con `--parallel 1` a proposito: la etapa de maven es igual en todos los Dockerfile, asi la primera imagen baja las dependencias y compila, y las otras 11 usan el cache. si se construyen en paralelo se compila 12 veces a la vez y no alcanza la ram. la primera vez se demora (a mi me tomo ~20 min por la descarga de dependencias dentro de colima), despues ~1 min.
 - los servicios parten en orden por los `depends_on` con healthcheck: mysql y kafka -> config-server y eureka -> auth-server -> ms-clientes -> ms-cuentas, ms-pagos, bff, notificaciones -> api-gateway.
 - para apagar: `docker-compose down` (con `-v` borra tambien las bases y kafka).
+- kafka y kafka-ui estan en el profile `kafka-local`, que el `.env.example` deja prendido (`COMPOSE_PROFILES=kafka-local`). para usar el kafka de la ec2 ver la seccion 11.
 
 paginas para mirar en el navegador:
 
@@ -135,6 +136,20 @@ docker-compose start ms-cuentas
 # a los 15s pasa a HALF_OPEN y con 2 llamadas buenas vuelve a CLOSED
 ```
 
+todo eso junto, con titulos por paso, lo hace el script que use para el video (tarda como 1 minuto):
+
+```bash
+scripts/demo-resiliencia.sh | tee evidencias/resiliencia.txt
+```
+
+1. muestra los circuitos de bff-web y ms-pagos en CLOSED
+2. apaga ms-cuentas (`stop`)
+3. llama al dashboard y a una transferencia, y muestra los 3 intentos en `/actuator/retryevents` de bff-web y de ms-pagos
+4. sigue llamando hasta que el circuito queda OPEN: dashboard con `degraded: true` al tiro, cajero 503, y el json de `/actuator/circuitbreakers`
+5. levanta ms-cuentas, espera HALF_OPEN y llama hasta que vuelve a CLOSED
+
+los endpoints `/actuator/circuitbreakers`, `/actuator/circuitbreakerevents`, `/actuator/retries` y `/actuator/retryevents` estan abiertos sin token (no muestran datos de clientes). como los bff no tienen puerto hacia afuera se consultan asi: `docker-compose exec bff-web wget -qO- http://localhost:8441/actuator/retryevents`.
+
 si se cae un bff entero, el que responde es el fallback del gateway:
 
 ```bash
@@ -194,6 +209,8 @@ docker-compose run --rm batch --spring.batch.job.name=transaccionesJob --batch.d
 
 los reportes csv (omitidos, resumen diario, auditoria) quedan en el volumen `batch-reportes` (`/app/reportes`).
 
+los resultados de cada job (con las lineas `Fin job=... read=... write=... descartadas=...` y `Tasa de omision`) quedaron en `evidencias/batch-*.txt`.
+
 ## 9. tests
 
 ```bash
@@ -210,3 +227,43 @@ CONFIG_PASSWORD=... DB_PASSWORD=... PAGOS_CLIENT_SECRET=... mvn -pl ms-pagos spr
 ```
 
 ojo que mysql y el auth-server no tienen puerto hacia el mac, para eso hay que agregarles `ports` en el compose. el gateway fuera de docker necesita el certificado: `scripts/certificado.sh`.
+
+## 11. kafka en la nube (ec2)
+
+kafka se puede levantar en una ec2 con el playbook de `infra/ansible/` (los pasos estan en [despliegue.md](despliegue.md)). al final `deploy.yml` imprime la ip. despues aca en local:
+
+```bash
+# en el .env: apagar el kafka local y apuntar a la ec2
+#   COMPOSE_PROFILES=
+#   KAFKA_BOOTSTRAP=<ip publica>:9094
+docker-compose stop kafka kafka-ui     # si estaban arriba
+docker-compose up -d                   # recrea los servicios con el nuevo KAFKA_BOOTSTRAP
+docker-compose exec ms-pagos env | grep KAFKA
+```
+
+ms-pagos crea los topicos si no existen (el playbook tambien los crea). para volver al kafka local: `COMPOSE_PROFILES=kafka-local`, borrar `KAFKA_BOOTSTRAP` y `docker-compose up -d`.
+
+### evidencia kafka en ec2
+
+con la ec2 arriba y el compose apuntando a ella:
+
+```bash
+scripts/evidencia-kafka-ec2.sh <ip_publica> ~/.ssh/labsuser.pem
+```
+
+deja todo en `evidencias/kafka-ec2.txt`:
+
+1. `aws ec2 describe-instances` filtrado por el tag `Project=banco-xyz-eft`: id, tipo, estado, ip y dns publico
+2. por ssh en la ec2: `hostname`, ip y dns publico (metadata imdsv2), `docker compose ps` y `kafka-topics.sh --describe`
+3. el `KAFKA_BOOTSTRAP` efectivo de ms-pagos y notificaciones aca en local (env y el `bootstrap.servers` del log)
+4. una transferencia por el gateway con token
+5. ese mismo evento leido EN la ec2 con `kafka-console-consumer.sh --from-beginning`
+6. `GET /api/notificaciones` mostrando que notificaciones (local) lo consumio, y el grupo de consumidores con lag 0
+
+capturas que hay que sacar a mano para el informe:
+
+- kafka-ui de la ec2 en `http://<ip>:8090`: topics -> `banco.transacciones` -> messages (con el evento de la transferencia) y consumers -> `notificaciones`
+- la consola de aws (ec2 -> instances) con la instancia `banco-xyz-eft` en running y su ip publica
+- la terminal con la sesion ssh (`ssh -i ~/.ssh/labsuser.pem ec2-user@<ip>` y `docker ps`)
+
+para probar el script sin aws hay un modo `--local` (`scripts/evidencia-kafka-ec2.sh 127.0.0.1 - --local`): se salta aws y ssh y corre los mismos comandos contra un contenedor `kafka` local. lo use con un kafka armado con la plantilla del playbook, la salida esta en `evidencias/kafka-ec2-simulado-local.txt`.

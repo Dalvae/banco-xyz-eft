@@ -1,253 +1,186 @@
 # despliegue en aws
 
-esto no lo deje corriendo en aws (no tengo como pagarlo todo el semestre), pero el proyecto esta armado para que el paso sea directo: cada servicio es una imagen docker, la config sale del config-server, los servicios se encuentran por eureka y todo lo que cambia entre ambientes va por variables de entorno (`AUTH_URL`, `EUREKA_URL`, `MYSQL_HOST`, `KAFKA_BOOTSTRAP`, claves).
+en aws levanto **solo kafka**, en una ec2 (asi lo pidio el profe). el resto del sistema (gateway, eureka, config, auth, los 3 ms, los 3 bff, notificaciones, mysql y el batch) corre con el docker-compose en mi maquina y se conecta a ese broker por la ip publica de la ec2.
 
-hay 2 caminos. el **a** es el mas simple (una ec2 con el mismo docker-compose) y el **b** es el que usaria en produccion (ecs fargate con servicios administrados).
+no uso alb ni balanceador de aws: el balanceo y enrutamiento que pide el enunciado lo hacen spring cloud gateway + spring cloud loadbalancer + eureka, igual que en local.
 
-region de ejemplo `us-east-1`, cuenta `123456789012` (cambiar por la de uno).
-
-```bash
-export AWS_REGION=us-east-1
-export CUENTA=$(aws sts get-caller-identity --query Account --output text)
-export ECR=$CUENTA.dkr.ecr.$AWS_REGION.amazonaws.com
+```
+ mi maquina (docker-compose, sin el profile kafka-local)            aws us-east-1
+ +---------------------------------------------------+            +--------------------------------+
+ | api-gateway, bff-*, ms-*, eureka, config, auth,   |   9094     | ec2 t3.medium (amazon linux)   |
+ | mysql, batch                                      | ---------> |  docker compose:               |
+ | ms-pagos (productor) / notificaciones (consumidor) |  plaintext |   kafka (1 broker kraft)       |
+ |   KAFKA_BOOTSTRAP=<ip publica>:9094               |            |   kafka-ui :8090               |
+ +---------------------------------------------------+            +--------------------------------+
+                                       security group: 22, 9094 y 8090 solo desde mi ip
 ```
 
-## que va donde
+lo probe pensando en el **aws academy learner lab** (credenciales temporales con session token, region us-east-1, sin poder crear roles iam), pero sirve igual en una cuenta normal.
 
-| local (docker-compose) | aws |
-|---|---|
-| imagenes `banco-xyz/*` | **ecr**, un repositorio por servicio |
-| contenedores | **ecs fargate** (un servicio ecs por microservicio) o una **ec2** con docker compose |
-| api-gateway https con certificado autofirmado | **alb** con certificado de **acm** (el https termina en el alb, el gateway queda en http adentro de la vpc) |
-| mysql con un schema por servicio | **rds mysql** (uno por servicio, o uno con usuarios separados como aca) |
-| kafka 1 broker | **amazon msk** (3 brokers, uno por zona) o kafka en ec2 (playbook de `infra/ansible/`) |
-| `.env` | **secrets manager** |
-| `docker-compose logs` | **cloudwatch logs** (driver `awslogs`) |
-| `--scale ms-cuentas=2` | **application auto scaling** del servicio ecs |
-| eureka + config-server | igual, como servicios ecs (o cambiar a cloud map y parameter store, pero no hace falta) |
+## camino principal: ansible (infra/ansible)
 
-## 1. imagenes a ecr (sirve para los 2 caminos)
+el playbook hace todo sin clickear en la consola. detalle de variables en [infra/ansible/README.md](infra/ansible/README.md).
+
+### 1. credenciales
+
+en el learner lab: "AWS Details" -> "Show" -> copiar el bloque de credenciales a `~/.aws/credentials` (perfil `[default]`, trae `aws_session_token`). se vencen cuando se apaga el lab, hay que pegarlas de nuevo cada sesion.
 
 ```bash
-aws ecr get-login-password | docker login --username AWS --password-stdin $ECR
-
-for s in config-server eureka-server api-gateway auth-server ms-cuentas ms-pagos ms-clientes \
-         bff-web bff-mobile bff-atm notificaciones batch; do
-  aws ecr create-repository --repository-name banco-xyz/$s --image-scanning-configuration scanOnPush=true || true
-  # fargate y las t3 son x86, mi mac es arm: por eso --platform
-  docker build --platform linux/amd64 -f $s/Dockerfile -t $ECR/banco-xyz/$s:1.0.0 .
-  docker push $ECR/banco-xyz/$s:1.0.0
-done
+aws configure set region us-east-1
+aws sts get-caller-identity       # si falla, las credenciales estan vencidas
 ```
 
-## 2. secretos en secrets manager
+para el ssh se usa la llave del lab: bajar `labsuser.pem` desde "AWS Details" a `~/.ssh/` y `chmod 600 ~/.ssh/labsuser.pem`.
 
-```bash
-aws secretsmanager create-secret --name banco-xyz/prod --secret-string '{
-  "DEMO_PASSWORD":"...", "OPS_CLIENT_SECRET":"...", "PAGOS_CLIENT_SECRET":"...",
-  "CONFIG_PASSWORD":"...", "DB_PASSWORD":"..."}'
-```
-
-en ecs cada task definition los toma con `secrets` (`valueFrom: arn:...:secret:banco-xyz/prod:DB_PASSWORD::`), asi no quedan en texto plano en la task definition ni en el repo.
-
-## camino a: una ec2 con docker compose
-
-es lo mismo que corre en mi mac, sirve para una demo o un ambiente de pruebas.
-
-```bash
-# security group: 443 desde internet (alb) y 22 solo desde mi ip
-aws ec2 create-security-group --group-name banco-xyz-sg --description "banco xyz eft"
-aws ec2 authorize-security-group-ingress --group-name banco-xyz-sg --protocol tcp --port 22 --cidr $(curl -s ifconfig.me)/32
-aws ec2 authorize-security-group-ingress --group-name banco-xyz-sg --protocol tcp --port 8443 --cidr 0.0.0.0/0
-
-# t3.large (8gb) porque es lo que necesita todo junto, amazon linux 2023
-AMI=$(aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 --query Parameter.Value --output text)
-aws ec2 run-instances --image-id $AMI --instance-type t3.large --key-name mi-llave \
-  --security-groups banco-xyz-sg --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=30}' \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=banco-xyz}]'
-```
-
-y en la ec2:
-
-```bash
-sudo dnf install -y docker git && sudo systemctl enable --now docker
-sudo usermod -aG docker ec2-user   # salir y entrar de nuevo
-sudo curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
-sudo chmod +x /usr/local/bin/docker-compose
-git clone https://github.com/Dalvae/banco-xyz-eft && cd banco-xyz-eft
-cp .env.example .env    # o sacar los valores de secrets manager con aws secretsmanager get-secret-value
-docker-compose --parallel 1 build && docker-compose up -d
-```
-
-para tener https con un certificado de verdad se pone un alb delante (paso 5 del camino b, con el target group apuntando a la ec2 en el puerto 8443 y protocolo HTTPS).
-
-### automatizado con ansible
-
-en `infra/ansible/` deje un playbook que hace la parte de la ec2 sin clickear: `provision.yml` crea la ec2 y su security group (solo abre ssh y kafka para mi ip), `deploy.yml` instala docker y levanta kafka (1 broker kraft + kafka-ui) y `teardown.yml` borra todo. esta pensado para el learner lab de aws academy. el resto del sistema queda local apuntando a ese kafka:
+### 2. crear la ec2 y levantar kafka
 
 ```bash
 cd infra/ansible
 ansible-galaxy collection install -r requirements.yml
-ansible-playbook provision.yml -e mi_ip=$(curl -s ifconfig.me)/32
-ansible-playbook deploy.yml          # al final imprime KAFKA_BOOTSTRAP=<ip>:9094
+
+# mi_ip: el ssh, el 9094 y kafka-ui solo se abren para mi ip publica
+ansible-playbook provision.yml -e mi_ip=$(curl -s ifconfig.me)/32 \
+  -e crear_key=false -e key_name=vockey -e key_file=~/.ssh/labsuser.pem
+
+# instala docker + compose, copia el compose de kafka (templates/kafka-compose.yaml.j2), lo levanta,
+# crea los topicos banco.transacciones (3 particiones) y banco.alertas-seguridad (1) y prueba el 9094
+ansible-playbook deploy.yml
+# al final imprime: KAFKA_BOOTSTRAP=<ip>:9094
+```
+
+fuera del lab (con un key pair propio) basta con `ansible-playbook provision.yml -e mi_ip=$(curl -s ifconfig.me)/32`.
+
+### 3. apuntar el compose local a la ec2
+
+en el `.env`:
+
+```bash
+COMPOSE_PROFILES=                  # sin kafka-local: no se levanta el kafka ni el kafka-ui de aca
+KAFKA_BOOTSTRAP=<ip publica>:9094
+```
+
+```bash
 cd ../..
-echo "KAFKA_BOOTSTRAP=<ip>:9094" >> .env    # el compose lo usa en vez del kafka local
-docker-compose up -d
-# al terminar
-cd infra/ansible && ansible-playbook teardown.yml
+docker-compose stop kafka kafka-ui    # si estaban arriba
+docker-compose up -d                  # recrea los servicios con el KAFKA_BOOTSTRAP nuevo
+docker-compose exec ms-pagos env | grep KAFKA
 ```
 
-los pasos y variables estan en [infra/ansible/README.md](infra/ansible/README.md). este playbook no lo corri para la entrega, los comandos de aws-cli de arriba son la forma manual del mismo camino.
+todos los servicios leen `${KAFKA_BOOTSTRAP:-kafka:9092}`, y los `depends_on` hacia kafka tienen `required: false`, asi que sin el profile arrancan igual. si la ec2 no responde un rato, los retiros y transferencias igual se hacen: el evento queda en el outbox de ms-pagos y se manda solo cuando vuelve kafka.
 
-## camino b: ecs fargate + msk + rds + alb (produccion)
-
-### 3. red, cluster y logs
-
-uso la vpc por defecto para no alargar esto (en produccion iria una vpc con subredes privadas para los servicios y publicas solo para el alb).
+### 4. evidencia kafka en ec2
 
 ```bash
-VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
-SUBNETS=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$VPC --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
-
-aws ecs create-cluster --cluster-name banco-xyz --capacity-providers FARGATE FARGATE_SPOT
-aws logs create-log-group --log-group-name /ecs/banco-xyz
-aws logs put-retention-policy --log-group-name /ecs/banco-xyz --retention-in-days 14
-
-# service discovery: cada servicio queda como <nombre>.banco.local (lo usan config-server, eureka y auth-server)
-aws servicediscovery create-private-dns-namespace --name banco.local --vpc $VPC
+scripts/evidencia-kafka-ec2.sh <ip publica> ~/.ssh/labsuser.pem
 ```
 
-### 4. bases y kafka administrados
+genera `evidencias/kafka-ec2.txt` con:
+
+1. `aws ec2 describe-instances` filtrado por el tag `Project=banco-xyz-eft` (id, tipo, estado, ip y dns publico)
+2. por ssh en la ec2: `hostname`, ip y dns publico sacados de la metadata (imdsv2), `docker compose ps` y `kafka-topics.sh --describe`
+3. el `KAFKA_BOOTSTRAP` que estan usando ms-pagos y notificaciones en local
+4. una transferencia por el gateway con token
+5. ese evento leido en la ec2 con `kafka-console-consumer.sh --from-beginning`
+6. `GET /api/notificaciones`: notificaciones (local) lo consumio desde la ec2, y el grupo con lag 0
+
+capturas a mano:
+
+- kafka-ui de la ec2 (`http://<ip>:8090`) con los mensajes de `banco.transacciones` y el consumidor `notificaciones`
+- consola de aws -> ec2 -> instances, con `banco-xyz-eft` en running y la ip publica
+- la terminal con el ssh a la ec2 y `docker ps`
+
+el script lo probe en mi mac con `--local` (sin aws ni ssh), contra un kafka levantado con la misma plantilla del playbook y anunciado por ip: `evidencias/kafka-ec2-simulado-local.txt`.
+
+### 5. borrar todo
 
 ```bash
-# rds mysql (una instancia chica, un schema y usuario por servicio con el mismo docker/mysql/init.sh)
-aws rds create-db-instance --db-instance-identifier banco-xyz-mysql --engine mysql --engine-version 8.4 \
-  --db-instance-class db.t4g.micro --allocated-storage 20 --master-username admin \
-  --manage-master-user-password --no-publicly-accessible --backup-retention-period 7
-
-# msk con 3 brokers (uno por zona). replication factor 3 y min.insync.replicas 2 como tenia en s8
-aws kafka create-cluster-v2 --cluster-name banco-xyz-msk --provisioned '{
-  "KafkaVersion":"3.8.x", "NumberOfBrokerNodes":3,
-  "BrokerNodeGroupInfo":{"InstanceType":"kafka.t3.small","ClientSubnets":["subnet-a","subnet-b","subnet-c"]},
-  "EncryptionInfo":{"EncryptionInTransit":{"ClientBroker":"TLS"}}}'
-aws kafka get-bootstrap-brokers --cluster-arn <arn>     # -> KAFKA_BOOTSTRAP
+cd infra/ansible
+ansible-playbook teardown.yml -e crear_key=false     # con vockey, para no tocar el key pair del lab
 ```
 
-en `config-repo/ms-pagos.yml` el numero de replicas de los topicos sale de `KAFKA_REPLICAS`, en msk se pone `KAFKA_REPLICAS=3` sin recompilar. para tls hay que agregar `spring.kafka.security.protocol=SSL` en `config-repo/application.yml`.
+y en el `.env` volver a `COMPOSE_PROFILES=kafka-local` y borrar `KAFKA_BOOTSTRAP`.
 
-### 5. alb con https (acm)
+### ojo con el learner lab
+
+- el lab se apaga solo a las 4 horas y las credenciales cambian en cada sesion.
+- si la ec2 se reinicia cambia la ip publica, y kafka anuncia la ip vieja: hay que correr `provision.yml` y `deploy.yml` de nuevo y cambiar `KAFKA_BOOTSTRAP` en el `.env`.
+- si cambia mi ip publica (otra red), `provision.yml` actualiza el security group.
+
+## alternativa manual con aws-cli
+
+lo mismo que hace el playbook, a mano:
 
 ```bash
-# certificado de acm (se valida por dns en el dominio de uno)
-aws acm request-certificate --domain-name api.bancoxyz.cl --validation-method DNS
+export AWS_REGION=us-east-1
+MI_IP=$(curl -s ifconfig.me)/32
 
-aws elbv2 create-load-balancer --name banco-xyz-alb --type application --subnets ${SUBNETS//,/ } --security-groups <sg-alb>
-aws elbv2 create-target-group --name banco-xyz-gateway --protocol HTTP --port 8443 --vpc-id $VPC \
-  --target-type ip --health-check-path /actuator/health
-aws elbv2 create-listener --load-balancer-arn <alb-arn> --protocol HTTPS --port 443 \
-  --certificates CertificateArn=<acm-arn> --ssl-policy ELBSecurityPolicy-TLS13-1-2-2021-06 \
-  --default-actions Type=forward,TargetGroupArn=<tg-arn>
-# y el 80 redirige a 443
-aws elbv2 create-listener --load-balancer-arn <alb-arn> --protocol HTTP --port 80 \
-  --default-actions 'Type=redirect,RedirectConfig={Protocol=HTTPS,Port=443,StatusCode=HTTP_301}'
+# security group: ssh, kafka externo y kafka-ui solo desde mi ip
+SG=$(aws ec2 create-security-group --group-name banco-xyz-eft-sg --description "kafka banco xyz eft" --query GroupId --output text)
+for p in 22 9094 8090; do
+  aws ec2 authorize-security-group-ingress --group-id $SG --protocol tcp --port $p --cidr $MI_IP
+done
+
+# amazon linux 2023 (la ami se busca en ssm), t3.medium, con el tag que usa el script de evidencia
+AMI=$(aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 --query Parameter.Value --output text)
+ID=$(aws ec2 run-instances --image-id $AMI --instance-type t3.medium --key-name vockey --security-group-ids $SG \
+  --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=20,VolumeType=gp3}' \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=banco-xyz-eft},{Key=Project,Value=banco-xyz-eft}]' \
+  --query 'Instances[0].InstanceId' --output text)
+aws ec2 wait instance-running --instance-ids $ID
+IP=$(aws ec2 describe-instances --instance-ids $ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+echo $IP
+
+# el compose de kafka sale de la misma plantilla del playbook, cambiando las variables a mano
+sed -e "s/{{ kafka_externo_port }}/9094/g" -e "s/{{ kafka_ui_port }}/8090/g" -e "s/{{ ansible_host }}/$IP/g" \
+  infra/ansible/templates/kafka-compose.yaml.j2 > /tmp/kafka-compose.yaml
+scp -i ~/.ssh/labsuser.pem /tmp/kafka-compose.yaml ec2-user@$IP:docker-compose.yaml
+
+ssh -i ~/.ssh/labsuser.pem ec2-user@$IP <<'EOF'
+sudo dnf install -y docker && sudo systemctl enable --now docker
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -sL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose && sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+sudo mkdir -p /opt/kafka-banco && sudo mv docker-compose.yaml /opt/kafka-banco/
+cd /opt/kafka-banco && sudo docker compose up -d --wait
+sudo docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic banco.transacciones --partitions 3 --replication-factor 1
+sudo docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic banco.alertas-seguridad --partitions 1 --replication-factor 1
+EOF
 ```
 
-en aws el gateway corre con `SERVER_SSL_ENABLED=false` porque el https lo termina el alb. el alb manda los `X-Forwarded-*` y el gateway confia en la vpc (`trusted-proxies` en `config-repo/api-gateway.yml`, ya incluye 10.x y 172.x).
+(en el camino manual docker queda con `sudo`; el playbook agrega `ec2-user` al grupo docker, que es lo que asume el script de evidencia. a mano: `sudo usermod -aG docker ec2-user` y volver a entrar por ssh.)
 
-### 6. task definitions y servicios
+despues se sigue desde el paso 3. para borrar: `aws ec2 terminate-instances --instance-ids $ID`, esperar con `aws ec2 wait instance-terminated --instance-ids $ID` y `aws ec2 delete-security-group --group-id $SG`.
 
-una task definition por servicio. ejemplo de ms-cuentas (`ecs/ms-cuentas.json`):
+## mejora futura: todo en aws
 
-```json
-{
-  "family": "ms-cuentas",
-  "networkMode": "awsvpc",
-  "requiresCompatibilities": ["FARGATE"],
-  "cpu": "512", "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
-  "containerDefinitions": [{
-    "name": "ms-cuentas",
-    "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/banco-xyz/ms-cuentas:1.0.0",
-    "portMappings": [{ "containerPort": 8081 }],
-    "environment": [
-      { "name": "JAVA_TOOL_OPTIONS", "value": "-XX:MaxRAMPercentage=75" },
-      { "name": "CONFIG_SERVER_URL", "value": "http://config-server.banco.local:8888" },
-      { "name": "EUREKA_URL", "value": "http://eureka-server.banco.local:8761/eureka" },
-      { "name": "AUTH_URL", "value": "http://auth-server.banco.local:9000" },
-      { "name": "AUTH_ISSUER", "value": "http://auth-server:9000" },
-      { "name": "MYSQL_HOST", "value": "banco-xyz-mysql.xxxx.us-east-1.rds.amazonaws.com" }
-    ],
-    "secrets": [
-      { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:banco-xyz/prod:DB_PASSWORD::" },
-      { "name": "CONFIG_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:banco-xyz/prod:CONFIG_PASSWORD::" }
-    ],
-    "healthCheck": { "command": ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q UP"], "interval": 15, "retries": 5, "startPeriod": 60 },
-    "logConfiguration": { "logDriver": "awslogs", "options": {
-      "awslogs-group": "/ecs/banco-xyz", "awslogs-region": "us-east-1", "awslogs-stream-prefix": "ms-cuentas" } }
-  }]
-}
-```
+esto no lo hice (en el learner lab no se pueden crear roles iam y msk/rds/alb cuestan), pero el proyecto ya esta preparado: cada servicio es una imagen, la config sale del config-server y todo lo que cambia entre ambientes va por variables de entorno (`AUTH_URL`, `EUREKA_URL`, `MYSQL_HOST`, `KAFKA_BOOTSTRAP`, claves).
+
+| hoy | en aws |
+|---|---|
+| imagenes `banco-xyz/*` construidas en local | **ecr**, un repositorio por servicio (`docker build --platform linux/amd64` desde un mac arm) |
+| docker-compose | **ecs fargate**, un servicio por microservicio, con cloud map para los nombres (`config-server.banco.local`) |
+| kafka en una ec2 | **amazon msk** con 3 brokers (uno por zona), replication factor 3 y `KAFKA_REPLICAS=3` en `config-repo/ms-pagos.yml` |
+| mysql con un schema por servicio | **rds mysql** (uno por servicio o uno con usuarios separados, como el `docker/mysql/init.sh`) |
+| https con certificado autofirmado en el gateway | **alb** con certificado de **acm** delante del gateway (el gateway ya confia en los `X-Forwarded-*` de la vpc, `trusted-proxies`) |
+| `.env` | **secrets manager**, inyectado en las task definitions con `secrets` |
+| `docker-compose logs` | **cloudwatch logs** (driver `awslogs`), buscando por traceId |
+| `--scale ms-cuentas=2` | **application auto scaling** del servicio ecs (target tracking de cpu al 60 %) |
+| `docker-compose run batch` | tarea ecs programada con **eventbridge scheduler**, con `RetryPolicy` (equivalente al `restart: on-failure`) |
+
+comandos base de ese camino, como referencia:
 
 ```bash
+CUENTA=$(aws sts get-caller-identity --query Account --output text); ECR=$CUENTA.dkr.ecr.us-east-1.amazonaws.com
+aws ecr get-login-password | docker login --username AWS --password-stdin $ECR
+for s in config-server eureka-server api-gateway auth-server ms-cuentas ms-pagos ms-clientes bff-web bff-mobile bff-atm notificaciones batch; do
+  aws ecr create-repository --repository-name banco-xyz/$s || true
+  docker build --platform linux/amd64 -f $s/Dockerfile -t $ECR/banco-xyz/$s:1.0.0 . && docker push $ECR/banco-xyz/$s:1.0.0
+done
+aws ecs create-cluster --cluster-name banco-xyz --capacity-providers FARGATE
+aws secretsmanager create-secret --name banco-xyz/prod --secret-string file://secretos.json
 aws ecs register-task-definition --cli-input-json file://ecs/ms-cuentas.json
-aws ecs create-service --cluster banco-xyz --service-name ms-cuentas --task-definition ms-cuentas \
-  --desired-count 2 --launch-type FARGATE \
-  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[<sg-servicios>],assignPublicIp=ENABLED}" \
-  --service-registries registryArn=<arn-de-cloud-map-ms-cuentas>
+aws ecs create-service --cluster banco-xyz --service-name ms-cuentas --task-definition ms-cuentas --desired-count 2 \
+  --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[subnet-a,subnet-b],securityGroups=[sg-x]}"
+aws application-autoscaling register-scalable-target --service-namespace ecs --resource-id service/banco-xyz/ms-cuentas \
+  --scalable-dimension ecs:service:DesiredCount --min-capacity 2 --max-capacity 6
 ```
-
-el api-gateway ademas lleva `--load-balancers targetGroupArn=<tg-arn>,containerName=api-gateway,containerPort=8443`. el orden de creacion es el mismo que en el compose: config-server, eureka-server, auth-server, ms-clientes, ms-cuentas, ms-pagos, bff, notificaciones, api-gateway.
-
-### 7. autoescalado
-
-```bash
-aws application-autoscaling register-scalable-target --service-namespace ecs \
-  --resource-id service/banco-xyz/ms-cuentas --scalable-dimension ecs:service:DesiredCount \
-  --min-capacity 2 --max-capacity 6
-
-aws application-autoscaling put-scaling-policy --service-namespace ecs \
-  --resource-id service/banco-xyz/ms-cuentas --scalable-dimension ecs:service:DesiredCount \
-  --policy-name cpu-60 --policy-type TargetTrackingScaling \
-  --target-tracking-scaling-policy-configuration '{
-    "TargetValue": 60.0,
-    "PredefinedMetricSpecification": {"PredefinedMetricType": "ECSServiceAverageCPUUtilization"},
-    "ScaleOutCooldown": 60, "ScaleInCooldown": 120 }'
-```
-
-lo mismo para ms-pagos y los bff. las replicas nuevas se registran solas en eureka y el loadbalancer las empieza a usar (igual que con `--scale` en local).
-
-### 8. batch con eventbridge
-
-el batch no es un servicio, es una tarea que corre y termina. con eventbridge scheduler se corre cada noche:
-
-```bash
-aws scheduler create-schedule --name banco-xyz-transacciones --schedule-expression "cron(0 3 * * ? *)" \
-  --flexible-time-window Mode=OFF --target '{
-    "Arn": "arn:aws:ecs:us-east-1:123456789012:cluster/banco-xyz",
-    "RoleArn": "arn:aws:iam::123456789012:role/eventbridge-ecs",
-    "EcsParameters": {"TaskDefinitionArn": "arn:aws:ecs:us-east-1:123456789012:task-definition/batch",
-      "LaunchType": "FARGATE", "NetworkConfiguration": {"awsvpcConfiguration": {"Subnets": ["subnet-a"], "AssignPublicIp": "ENABLED"}}},
-    "Input": "{\"containerOverrides\":[{\"name\":\"batch\",\"command\":[\"--spring.batch.job.name=transaccionesJob\"]}]}",
-    "RetryPolicy": {"MaximumRetryAttempts": 2}}'
-```
-
-el `RetryPolicy` es el equivalente al `restart: on-failure` del compose: si el contenedor sale con codigo 1, eventbridge lo vuelve a lanzar y `ReejecucionRunner` retoma la ejecucion FAILED desde donde quedo. los csv irian en s3 (`--ruta.archivo.transacciones=...` apuntando a un volumen o bajandolos al partir).
-
-### 9. monitoreo
-
-```bash
-# alarma si el gateway responde 5xx (por ejemplo fallbacks porque se cayo un bff)
-aws cloudwatch put-metric-alarm --alarm-name banco-xyz-5xx --namespace AWS/ApplicationELB \
-  --metric-name HTTPCode_Target_5XX_Count --dimensions Name=LoadBalancer,Value=app/banco-xyz-alb/xxxx \
-  --statistic Sum --period 60 --threshold 10 --comparison-operator GreaterThanThreshold --evaluation-periods 2 \
-  --alarm-actions arn:aws:sns:us-east-1:123456789012:banco-xyz-alertas
-
-# buscar una operacion por su traceId en los logs de todos los servicios
-aws logs filter-log-events --log-group-name /ecs/banco-xyz --filter-pattern '"6acab6e24cca14003f0c2de2e0601690"'
-```
-
-y container insights en el cluster (`aws ecs update-cluster-settings --cluster banco-xyz --settings name=containerInsights,value=enabled`) para cpu y memoria por servicio.
-
-## costos y limpieza
-
-lo mas caro es msk y el alb. para una demo conviene el camino a (o el playbook de ansible) y borrar todo al terminar: `aws ecs delete-service --force`, `aws rds delete-db-instance --skip-final-snapshot`, `aws kafka delete-cluster`, `aws elbv2 delete-load-balancer`, `aws ecr delete-repository --force`.
