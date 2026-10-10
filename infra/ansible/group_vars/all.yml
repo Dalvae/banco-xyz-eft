@@ -1,7 +1,7 @@
 # variables comunes de los 3 playbooks
 aws_region: us-east-1
-instance_type: t3.large      # el stack necesita ~8 GB de ram
-volume_size_gb: 30
+instance_type: t3.medium     # solo kafka + kafka-ui, con 4 GB sobra
+volume_size_gb: 20
 project_name: banco-xyz-eft
 # key pair: por defecto creo uno propio. en learner lab se puede usar el que ya existe:
 #   -e key_name=vockey -e crear_key=false -e key_file=~/.ssh/labsuser.pem
@@ -20,17 +20,12 @@ ssh_user: ec2-user
 # mi_ip se pasa por -e (ej: -e mi_ip=1.2.3.4/32), no la dejo fija en el repo
 mi_ip: ""
 
-# puertos (ojo: el otro agente puede cambiar el del gateway en el compose)
-gateway_port: 8443
-gateway_health_path: /actuator/health
+# puertos de kafka en la ec2
+kafka_externo_port: 9094     # el que usa mi docker compose local (KAFKA_BOOTSTRAP)
+kafka_ui_port: 8090
+kafka_dir: /opt/kafka-banco
 
-repo_url: https://github.com/Dalvae/banco-xyz-eft
-repo_branch: main
-app_dir: /opt/banco-xyz
-
-# replicas de ms-cuentas para --scale
-cuentas_replicas: 2
-
-# claves: van en vault.yml (ansible-vault) o con -e, nunca aqui
-demo_password: "{{ vault_demo_password | default('') }}"
-ops_client_secret: "{{ vault_ops_client_secret | default('') }}"
+# topicos reales, los mismos que crea ms-pagos (KafkaProducerConfig)
+topicos:
+  - { nombre: banco.transacciones, particiones: 3 }
+  - { nombre: banco.alertas-seguridad, particiones: 1 }

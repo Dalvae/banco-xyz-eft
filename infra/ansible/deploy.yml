@@ -1,12 +1,12 @@
 ---
-# instala docker en la ec2 y levanta todo el compose
-- name: desplegar banco xyz
+# instala docker en la ec2 y levanta solo kafka + kafka-ui
+- name: desplegar kafka
   hosts: banco
   become: true
   tasks:
-    - name: paquetes (docker y git)
+    - name: docker
       ansible.builtin.dnf:
-        name: [docker, git]
+        name: docker
         state: present
 
     - name: docker corriendo
@@ -15,12 +15,17 @@
         state: started
         enabled: true
 
+    - name: carpeta para el plugin de compose
+      ansible.builtin.file:
+        path: /usr/local/lib/docker/cli-plugins
+        state: directory
+        mode: "0755"
+
     - name: plugin de compose (no viene en los repos de al2023, bajo el binario)
       ansible.builtin.get_url:
         url: https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64
         dest: /usr/local/lib/docker/cli-plugins/docker-compose
         mode: "0755"
-      tags: compose
 
     - name: ec2-user al grupo docker
       ansible.builtin.user:
@@ -28,47 +33,50 @@
         groups: docker
         append: true
 
-    - name: clonar el repo
-      ansible.builtin.git:
-        repo: "{{ repo_url }}"
-        dest: "{{ app_dir }}"
-        version: "{{ repo_branch }}"
-        force: true
+    - name: carpeta de la app
+      ansible.builtin.file:
+        path: "{{ kafka_dir }}"
+        state: directory
+        mode: "0755"
 
-    - name: revisar que las claves vengan (vault o -e)
-      ansible.builtin.assert:
-        that:
-          - demo_password | length > 0
-          - ops_client_secret | length > 0
-        fail_msg: "faltan claves, usa -e @vault.yml --ask-vault-pass"
-
-    - name: generar .env
+    - name: copiar el compose de kafka
       ansible.builtin.template:
-        src: env.j2
-        dest: "{{ app_dir }}/.env"
-        mode: "0600"
-      no_log: true
+        src: kafka-compose.yaml.j2
+        dest: "{{ kafka_dir }}/docker-compose.yaml"
+        mode: "0644"
 
-    - name: docker compose up (con scale de ms-cuentas)
+    - name: levantar kafka y kafka-ui
       ansible.builtin.command:
-        cmd: docker compose up -d --build --scale ms-cuentas={{ cuentas_replicas }}
-        chdir: "{{ app_dir }}"
+        cmd: docker compose up -d --wait
+        chdir: "{{ kafka_dir }}"
       changed_when: true
 
-    - name: esperar el healthcheck del gateway
-      ansible.builtin.uri:
-        url: "https://localhost:{{ gateway_port }}{{ gateway_health_path }}"
-        validate_certs: false
-        status_code: 200
-      register: health
-      retries: 40
-      delay: 15
-      until: health.status == 200
+    - name: crear los topicos (ms-pagos tambien los crea, esto es por si acaso)
+      ansible.builtin.command:
+        cmd: >
+          docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092
+          --create --if-not-exists --topic {{ item.nombre }}
+          --partitions {{ item.particiones }} --replication-factor 1
+      loop: "{{ topicos }}"
+      changed_when: false
 
-    - name: smoke test desde mi compu
-      ansible.builtin.uri:
-        url: "https://{{ inventory_hostname }}:{{ gateway_port }}{{ gateway_health_path }}"
-        validate_certs: false
-        status_code: 200
+    - name: smoke test, listar topicos desde el contenedor
+      ansible.builtin.command:
+        cmd: docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+      register: lista
+      changed_when: false
+      failed_when: topicos | map(attribute='nombre') | difference(lista.stdout_lines) | length > 0
+
+    - name: smoke test, el 9094 responde desde mi compu
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ kafka_externo_port }}"
+        timeout: 60
       delegate_to: localhost
       become: false
+
+    - name: linea para el .env local
+      ansible.builtin.debug:
+        msg:
+          - "KAFKA_BOOTSTRAP={{ ansible_host }}:{{ kafka_externo_port }}"
+          - "kafka-ui: http://{{ ansible_host }}:{{ kafka_ui_port }}"

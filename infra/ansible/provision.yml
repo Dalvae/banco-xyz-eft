@@ -1,5 +1,5 @@
 ---
-# crea key pair, security group y la ec2. corre en mi compu (localhost)
+# crea key pair, security group y la ec2 donde va solo kafka. corre en mi compu (localhost)
 - name: provisionar ec2 para banco xyz
   hosts: localhost
   connection: local
@@ -11,7 +11,7 @@
     - name: revisar que me pasaron mi_ip
       ansible.builtin.assert:
         that: mi_ip | length > 0
-        fail_msg: "pasa tu ip con -e mi_ip=x.x.x.x/32 (para no abrir el 22 al mundo)"
+        fail_msg: "pasa tu ip con -e mi_ip=x.x.x.x/32 (para no abrir kafka al mundo)"
 
     - name: key pair (solo si no uso uno existente como vockey)
       amazon.aws.ec2_key:
@@ -42,8 +42,11 @@
             ports: 22
             cidr_ip: "{{ mi_ip }}"
           - proto: tcp
-            ports: "{{ gateway_port }}"
-            cidr_ip: 0.0.0.0/0
+            ports: "{{ kafka_externo_port }}"
+            cidr_ip: "{{ mi_ip }}"
+          - proto: tcp
+            ports: "{{ kafka_ui_port }}"
+            cidr_ip: "{{ mi_ip }}"
         tags:
           Project: "{{ project_name }}"
       register: sg
@@ -98,4 +101,4 @@
 
     - name: listo
       ansible.builtin.debug:
-        msg: "ec2 arriba en {{ ec2.instances[0].public_ip_address }}, ahora corre deploy.yml"
+        msg: "ec2 arriba en {{ ec2.instances[0].public_ip_address }}, ahora corre deploy.yml (sin ALB ni nada, solo la ec2)"
