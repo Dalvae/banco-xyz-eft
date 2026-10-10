@@ -59,11 +59,8 @@ management:
   endpoint:
     health:
       show-details: always
+  # traceId-spanId en cada linea de log (boot 3.5 los pone solo si hay micrometer tracing),
+  # asi se sigue una operacion por todos los servicios
   tracing:
     sampling:
       probability: 1.0
-
-# traceId y spanId en cada linea de log, asi se sigue una operacion por todos los servicios
-logging:
-  pattern:
-    level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-}]"

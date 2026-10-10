@@ -1,7 +1,13 @@
 **/target
 .git
+.omc
 .env
 .runtime
 evidencias
+infra
 scripts
 *.md
+informe
+docs
+*.pdf
+*.docx
