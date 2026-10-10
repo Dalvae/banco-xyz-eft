@@ -230,7 +230,7 @@ ojo que mysql y el auth-server no tienen puerto hacia el mac, para eso hay que a
 
 ## 11. kafka en la nube (ec2)
 
-kafka se puede levantar en una ec2 con el playbook de `infra/ansible/` (los pasos estan en [despliegue.md](despliegue.md)). al final `deploy.yml` imprime la ip. despues aca en local:
+en la entrega todo corre local y en aws (learner lab) va solo kafka, en una ec2 que arma el playbook de `infra/ansible/` (requisitos, puertos, alternativa con aws-cli y limpieza en [despliegue.md](despliegue.md)). al final `deploy.yml` imprime la ip. despues aca en local:
 
 ```bash
 # en el .env: apagar el kafka local y apuntar a la ec2

@@ -1,186 +1,193 @@
-# despliegue en aws
+# despliegue
 
-en aws levanto **solo kafka**, en una ec2 (asi lo pidio el profe). el resto del sistema (gateway, eureka, config, auth, los 3 ms, los 3 bff, notificaciones, mysql y el batch) corre con el docker-compose en mi maquina y se conecta a ese broker por la ip publica de la ec2.
-
-no uso alb ni balanceador de aws: el balanceo y enrutamiento que pide el enunciado lo hacen spring cloud gateway + spring cloud loadbalancer + eureka, igual que en local.
+el sistema completo corre local con docker compose. en aws (learner lab) se despliega **solo kafka**, en una ec2 que arma un playbook de ansible, y los microservicios locales se conectan a ese broker remoto. asi lo pidio el profe, por eso no hay alb ni balanceador de aws: el balanceo y enrutamiento lo hacen spring cloud gateway + loadbalancer + eureka, igual que en local.
 
 ```
- mi maquina (docker-compose, sin el profile kafka-local)            aws us-east-1
- +---------------------------------------------------+            +--------------------------------+
- | api-gateway, bff-*, ms-*, eureka, config, auth,   |   9094     | ec2 t3.medium (amazon linux)   |
- | mysql, batch                                      | ---------> |  docker compose:               |
- | ms-pagos (productor) / notificaciones (consumidor) |  plaintext |   kafka (1 broker kraft)       |
- |   KAFKA_BOOTSTRAP=<ip publica>:9094               |            |   kafka-ui :8090               |
- +---------------------------------------------------+            +--------------------------------+
-                                       security group: 22, 9094 y 8090 solo desde mi ip
+ mi maquina (docker compose, sin el profile kafka-local)             aws learner lab (us-east-1)
+ +---------------------------------------------------+             +-------------------------------+
+ | api-gateway, bff-*, ms-*, eureka, config, auth,   |    9094     | ec2 t3.medium, amazon linux   |
+ | notificaciones, mysql, batch                      | ----------> | docker compose:               |
+ |   ms-pagos (productor), notificaciones (consumidor)|  plaintext  |   kafka (1 broker kraft)      |
+ |   KAFKA_BOOTSTRAP=<ip publica>:9094               |             |   kafka-ui :8090              |
+ +---------------------------------------------------+             +-------------------------------+
 ```
 
-lo probe pensando en el **aws academy learner lab** (credenciales temporales con session token, region us-east-1, sin poder crear roles iam), pero sirve igual en una cuenta normal.
+## 1. requisitos
 
-## camino principal: ansible (infra/ansible)
+- **aws academy learner lab**: entrar al curso, "Start Lab" y esperar que el circulo quede verde.
+- **credenciales**: en "AWS Details" -> "AWS CLI: Show", copiar el bloque completo (trae `aws_access_key_id`, `aws_secret_access_key` y `aws_session_token`) a `~/.aws/credentials` como perfil `[default]`. son temporales, cada vez que se reinicia el lab hay que pegarlas de nuevo.
+  ```bash
+  aws configure set region us-east-1
+  aws sts get-caller-identity      # tiene que mostrar la cuenta y un rol voclabs. si falla, estan vencidas
+  ```
+- **llave ssh**: en "AWS Details" bajar `labsuser.pem` (es el key pair `vockey` que ya existe en el lab), dejarla en `~/.ssh/labsuser.pem` y `chmod 600 ~/.ssh/labsuser.pem`.
+- **local**: docker con compose, ansible (`brew install ansible` o `pipx install ansible`), aws-cli v2, curl y openssl.
 
-el playbook hace todo sin clickear en la consola. detalle de variables en [infra/ansible/README.md](infra/ansible/README.md).
-
-### 1. credenciales
-
-en el learner lab: "AWS Details" -> "Show" -> copiar el bloque de credenciales a `~/.aws/credentials` (perfil `[default]`, trae `aws_session_token`). se vencen cuando se apaga el lab, hay que pegarlas de nuevo cada sesion.
+## 2. levantar todo local
 
 ```bash
-aws configure set region us-east-1
-aws sts get-caller-identity       # si falla, las credenciales estan vencidas
+cp .env.example .env
+docker compose up -d --build     # si la maquina tiene poca ram: primero docker compose --parallel 1 build
+docker compose ps                # esperar que todo diga (healthy)
 ```
 
-para el ssh se usa la llave del lab: bajar `labsuser.pem` desde "AWS Details" a `~/.ssh/` y `chmod 600 ~/.ssh/labsuser.pem`.
+con el `.env` de ejemplo (`COMPOSE_PROFILES=kafka-local`) kafka y kafka-ui corren tambien en local. el paso a paso con todos los curl esta en [instrucciones.md](instrucciones.md).
 
-### 2. crear la ec2 y levantar kafka
+## 3. kafka en ec2 con ansible
 
 ```bash
 cd infra/ansible
 ansible-galaxy collection install -r requirements.yml
 
-# mi_ip: el ssh, el 9094 y kafka-ui solo se abren para mi ip publica
+# crea el security group, la ec2 (amazon linux 2023, ami sacada de ssm) y el inventory.ini
 ansible-playbook provision.yml -e mi_ip=$(curl -s ifconfig.me)/32 \
   -e crear_key=false -e key_name=vockey -e key_file=~/.ssh/labsuser.pem
 
-# instala docker + compose, copia el compose de kafka (templates/kafka-compose.yaml.j2), lo levanta,
-# crea los topicos banco.transacciones (3 particiones) y banco.alertas-seguridad (1) y prueba el 9094
+# instala docker igual que en la clase 7 (dnf install docker, systemctl enable, ec2-user al grupo docker)
+# mas el plugin de compose, copia el compose de kafka (templates/kafka-compose.yaml.j2) y lo levanta.
+# crea los topicos banco.transacciones (3 particiones) y banco.alertas-seguridad (1) y prueba el 9094 desde mi compu
 ansible-playbook deploy.yml
-# al final imprime: KAFKA_BOOTSTRAP=<ip>:9094
 ```
 
-fuera del lab (con un key pair propio) basta con `ansible-playbook provision.yml -e mi_ip=$(curl -s ifconfig.me)/32`.
+al final `deploy.yml` imprime la linea para el `.env`: `KAFKA_BOOTSTRAP=<ip publica>:9094`.
 
-### 3. apuntar el compose local a la ec2
+el security group abre solo 3 puertos y solo para mi ip (`mi_ip`):
 
-en el `.env`:
+| puerto | para que |
+|---|---|
+| 22 | ssh, para ansible y para sacar la evidencia |
+| 9094 | el listener externo de kafka, el que usan ms-pagos y notificaciones desde mi maquina |
+| 8090 | kafka-ui, para ver topicos, mensajes y consumidores en el navegador |
+
+kafka va en plaintext (sin tls ni usuario), por eso es importante que el 9094 no quede abierto a todo internet. el 9092 (listener interno) no se abre.
+
+## 4. conectar lo local al kafka de la ec2
+
+en el `.env` de la raiz:
 
 ```bash
-COMPOSE_PROFILES=                  # sin kafka-local: no se levanta el kafka ni el kafka-ui de aca
+COMPOSE_PROFILES=                     # vacio: no se levanta el kafka ni el kafka-ui locales
 KAFKA_BOOTSTRAP=<ip publica>:9094
 ```
 
 ```bash
-cd ../..
-docker-compose stop kafka kafka-ui    # si estaban arriba
-docker-compose up -d                  # recrea los servicios con el KAFKA_BOOTSTRAP nuevo
-docker-compose exec ms-pagos env | grep KAFKA
+docker compose stop kafka kafka-ui    # si estaban arriba
+docker compose up -d                  # recrea los servicios con el KAFKA_BOOTSTRAP nuevo
 ```
 
-todos los servicios leen `${KAFKA_BOOTSTRAP:-kafka:9092}`, y los `depends_on` hacia kafka tienen `required: false`, asi que sin el profile arrancan igual. si la ec2 no responde un rato, los retiros y transferencias igual se hacen: el evento queda en el outbox de ms-pagos y se manda solo cuando vuelve kafka.
+todos los servicios leen `${KAFKA_BOOTSTRAP:-kafka:9092}` y los `depends_on` hacia kafka tienen `required: false`, asi que arrancan sin el kafka local. para confirmar que usan la ip publica:
 
-### 4. evidencia kafka en ec2
+```bash
+docker compose exec ms-pagos env | grep KAFKA                        # KAFKA_BOOTSTRAP=<ip>:9094
+docker compose logs ms-pagos | grep -m1 "bootstrap.servers"          # bootstrap.servers = [<ip>:9094]
+docker compose logs notificaciones | grep -m1 "bootstrap.servers"
+```
+
+si la ec2 no responde un rato las operaciones igual se hacen: el evento queda en el outbox de ms-pagos y se manda solo cuando vuelve kafka.
+
+## 5. evidencia
 
 ```bash
 scripts/evidencia-kafka-ec2.sh <ip publica> ~/.ssh/labsuser.pem
 ```
 
-genera `evidencias/kafka-ec2.txt` con:
+deja todo en `evidencias/kafka-ec2.txt`, con un titulo por paso:
 
-1. `aws ec2 describe-instances` filtrado por el tag `Project=banco-xyz-eft` (id, tipo, estado, ip y dns publico)
-2. por ssh en la ec2: `hostname`, ip y dns publico sacados de la metadata (imdsv2), `docker compose ps` y `kafka-topics.sh --describe`
-3. el `KAFKA_BOOTSTRAP` que estan usando ms-pagos y notificaciones en local
+1. `aws ec2 describe-instances` filtrado por el tag `Project=banco-xyz-eft`: id, tipo, estado, ip y dns publico
+2. por ssh en la ec2: `hostname`, ip y dns publico (metadata con imdsv2), `docker compose ps` y `kafka-topics.sh --describe`
+3. el `KAFKA_BOOTSTRAP` que usan ms-pagos y notificaciones en local
 4. una transferencia por el gateway con token
-5. ese evento leido en la ec2 con `kafka-console-consumer.sh --from-beginning`
-6. `GET /api/notificaciones`: notificaciones (local) lo consumio desde la ec2, y el grupo con lag 0
+5. ese evento leido dentro de la ec2 con `kafka-console-consumer.sh --from-beginning`
+6. `GET /api/notificaciones` mostrando que notificaciones lo consumio, y el grupo de consumidores con lag 0
 
-capturas a mano:
-
-- kafka-ui de la ec2 (`http://<ip>:8090`) con los mensajes de `banco.transacciones` y el consumidor `notificaciones`
-- consola de aws -> ec2 -> instances, con `banco-xyz-eft` en running y la ip publica
-- la terminal con el ssh a la ec2 y `docker ps`
-
-el script lo probe en mi mac con `--local` (sin aws ni ssh), contra un kafka levantado con la misma plantilla del playbook y anunciado por ip: `evidencias/kafka-ec2-simulado-local.txt`.
-
-### 5. borrar todo
+tambien se puede revisar a mano:
 
 ```bash
-cd infra/ansible
-ansible-playbook teardown.yml -e crear_key=false     # con vockey, para no tocar el key pair del lab
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip>
+cd /opt/kafka-banco && docker compose ps
 ```
 
-y en el `.env` volver a `COMPOSE_PROFILES=kafka-local` y borrar `KAFKA_BOOTSTRAP`.
+y kafka-ui en `http://<ip>:8090`.
 
-### ojo con el learner lab
+capturas para el informe y el video:
 
-- el lab se apaga solo a las 4 horas y las credenciales cambian en cada sesion.
-- si la ec2 se reinicia cambia la ip publica, y kafka anuncia la ip vieja: hay que correr `provision.yml` y `deploy.yml` de nuevo y cambiar `KAFKA_BOOTSTRAP` en el `.env`.
-- si cambia mi ip publica (otra red), `provision.yml` actualiza el security group.
+- consola de aws -> ec2 -> instances: `banco-xyz-eft` en running, con su ip y dns publico
+- terminal con la sesion ssh y `docker compose ps` en la ec2
+- kafka-ui en `http://<ip>:8090`: el broker, el topico `banco.transacciones` con el mensaje de la transferencia y el consumidor `notificaciones`
+- `docker compose ps` local sin el contenedor kafka y el `env | grep KAFKA` de ms-pagos
 
-## alternativa manual con aws-cli
+el script tiene un modo `--local` para probarlo sin aws (`scripts/evidencia-kafka-ec2.sh 127.0.0.1 - --local`). lo probe contra un kafka levantado con la misma plantilla del playbook y anunciado por ip, la salida esta en `evidencias/kafka-ec2-simulado-local.txt`.
 
-lo mismo que hace el playbook, a mano:
+## 6. alternativa manual con aws-cli
+
+lo mismo que hace ansible, pero a mano:
 
 ```bash
 export AWS_REGION=us-east-1
 MI_IP=$(curl -s ifconfig.me)/32
 
-# security group: ssh, kafka externo y kafka-ui solo desde mi ip
+# security group con los 3 puertos solo para mi ip
 SG=$(aws ec2 create-security-group --group-name banco-xyz-eft-sg --description "kafka banco xyz eft" --query GroupId --output text)
 for p in 22 9094 8090; do
   aws ec2 authorize-security-group-ingress --group-id $SG --protocol tcp --port $p --cidr $MI_IP
 done
 
-# amazon linux 2023 (la ami se busca en ssm), t3.medium, con el tag que usa el script de evidencia
+# amazon linux 2023 con la ami de ssm, key pair vockey del lab y el tag que usa el script de evidencia.
+# el user-data instala docker como en la clase 7
+cat > user-data.sh <<'EOF'
+#!/bin/bash
+dnf install -y docker
+systemctl enable --now docker
+usermod -aG docker ec2-user
+mkdir -p /usr/local/lib/docker/cli-plugins /opt/kafka-banco
+curl -sL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+EOF
 AMI=$(aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 --query Parameter.Value --output text)
 ID=$(aws ec2 run-instances --image-id $AMI --instance-type t3.medium --key-name vockey --security-group-ids $SG \
-  --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=20,VolumeType=gp3}' \
+  --user-data file://user-data.sh \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=banco-xyz-eft},{Key=Project,Value=banco-xyz-eft}]' \
   --query 'Instances[0].InstanceId' --output text)
-aws ec2 wait instance-running --instance-ids $ID
+aws ec2 wait instance-status-ok --instance-ids $ID
 IP=$(aws ec2 describe-instances --instance-ids $ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-echo $IP
 
-# el compose de kafka sale de la misma plantilla del playbook, cambiando las variables a mano
+# el compose de kafka sale de la plantilla del playbook, cambiando las variables a mano
 sed -e "s/{{ kafka_externo_port }}/9094/g" -e "s/{{ kafka_ui_port }}/8090/g" -e "s/{{ ansible_host }}/$IP/g" \
-  infra/ansible/templates/kafka-compose.yaml.j2 > /tmp/kafka-compose.yaml
-scp -i ~/.ssh/labsuser.pem /tmp/kafka-compose.yaml ec2-user@$IP:docker-compose.yaml
-
-ssh -i ~/.ssh/labsuser.pem ec2-user@$IP <<'EOF'
-sudo dnf install -y docker && sudo systemctl enable --now docker
-sudo mkdir -p /usr/local/lib/docker/cli-plugins
-sudo curl -sL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
-  -o /usr/local/lib/docker/cli-plugins/docker-compose && sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-sudo mkdir -p /opt/kafka-banco && sudo mv docker-compose.yaml /opt/kafka-banco/
-cd /opt/kafka-banco && sudo docker compose up -d --wait
-sudo docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic banco.transacciones --partitions 3 --replication-factor 1
-sudo docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic banco.alertas-seguridad --partitions 1 --replication-factor 1
-EOF
+  infra/ansible/templates/kafka-compose.yaml.j2 > kafka-compose.yaml
+scp -i ~/.ssh/labsuser.pem kafka-compose.yaml ec2-user@$IP:/tmp/docker-compose.yaml
+ssh -i ~/.ssh/labsuser.pem ec2-user@$IP 'sudo mv /tmp/docker-compose.yaml /opt/kafka-banco/ && cd /opt/kafka-banco && docker compose up -d --wait'
+echo "KAFKA_BOOTSTRAP=$IP:9094"
 ```
 
-(en el camino manual docker queda con `sudo`; el playbook agrega `ec2-user` al grupo docker, que es lo que asume el script de evidencia. a mano: `sudo usermod -aG docker ec2-user` y volver a entrar por ssh.)
+los topicos los crea ms-pagos al partir (y el playbook por si acaso). despues se sigue desde el paso 4.
 
-despues se sigue desde el paso 3. para borrar: `aws ec2 terminate-instances --instance-ids $ID`, esperar con `aws ec2 wait instance-terminated --instance-ids $ID` y `aws ec2 delete-security-group --group-id $SG`.
-
-## mejora futura: todo en aws
-
-esto no lo hice (en el learner lab no se pueden crear roles iam y msk/rds/alb cuestan), pero el proyecto ya esta preparado: cada servicio es una imagen, la config sale del config-server y todo lo que cambia entre ambientes va por variables de entorno (`AUTH_URL`, `EUREKA_URL`, `MYSQL_HOST`, `KAFKA_BOOTSTRAP`, claves).
-
-| hoy | en aws |
-|---|---|
-| imagenes `banco-xyz/*` construidas en local | **ecr**, un repositorio por servicio (`docker build --platform linux/amd64` desde un mac arm) |
-| docker-compose | **ecs fargate**, un servicio por microservicio, con cloud map para los nombres (`config-server.banco.local`) |
-| kafka en una ec2 | **amazon msk** con 3 brokers (uno por zona), replication factor 3 y `KAFKA_REPLICAS=3` en `config-repo/ms-pagos.yml` |
-| mysql con un schema por servicio | **rds mysql** (uno por servicio o uno con usuarios separados, como el `docker/mysql/init.sh`) |
-| https con certificado autofirmado en el gateway | **alb** con certificado de **acm** delante del gateway (el gateway ya confia en los `X-Forwarded-*` de la vpc, `trusted-proxies`) |
-| `.env` | **secrets manager**, inyectado en las task definitions con `secrets` |
-| `docker-compose logs` | **cloudwatch logs** (driver `awslogs`), buscando por traceId |
-| `--scale ms-cuentas=2` | **application auto scaling** del servicio ecs (target tracking de cpu al 60 %) |
-| `docker-compose run batch` | tarea ecs programada con **eventbridge scheduler**, con `RetryPolicy` (equivalente al `restart: on-failure`) |
-
-comandos base de ese camino, como referencia:
+## 7. limpieza
 
 ```bash
-CUENTA=$(aws sts get-caller-identity --query Account --output text); ECR=$CUENTA.dkr.ecr.us-east-1.amazonaws.com
-aws ecr get-login-password | docker login --username AWS --password-stdin $ECR
-for s in config-server eureka-server api-gateway auth-server ms-cuentas ms-pagos ms-clientes bff-web bff-mobile bff-atm notificaciones batch; do
-  aws ecr create-repository --repository-name banco-xyz/$s || true
-  docker build --platform linux/amd64 -f $s/Dockerfile -t $ECR/banco-xyz/$s:1.0.0 . && docker push $ECR/banco-xyz/$s:1.0.0
-done
-aws ecs create-cluster --cluster-name banco-xyz --capacity-providers FARGATE
-aws secretsmanager create-secret --name banco-xyz/prod --secret-string file://secretos.json
-aws ecs register-task-definition --cli-input-json file://ecs/ms-cuentas.json
-aws ecs create-service --cluster banco-xyz --service-name ms-cuentas --task-definition ms-cuentas --desired-count 2 \
-  --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[subnet-a,subnet-b],securityGroups=[sg-x]}"
-aws application-autoscaling register-scalable-target --service-namespace ecs --resource-id service/banco-xyz/ms-cuentas \
-  --scalable-dimension ecs:service:DesiredCount --min-capacity 2 --max-capacity 6
+cd infra/ansible
+ansible-playbook teardown.yml -e crear_key=false     # borra la ec2 y el security group, sin tocar vockey
 ```
+
+a mano: `aws ec2 terminate-instances --instance-ids $ID`, `aws ec2 wait instance-terminated --instance-ids $ID` y `aws ec2 delete-security-group --group-id $SG`. en el `.env` volver a `COMPOSE_PROFILES=kafka-local` y borrar `KAFKA_BOOTSTRAP`.
+
+ojo con el learner lab:
+
+- se apaga solo a las 4 horas (o al hacer "End Lab"). las credenciales cambian en cada sesion.
+- al volver a prender, la ec2 cambia de ip publica y kafka sigue anunciando la vieja: hay que correr `provision.yml` y `deploy.yml` de nuevo y actualizar `KAFKA_BOOTSTRAP` en el `.env`.
+- si cambia mi ip (otra red), `provision.yml` actualiza el security group.
+
+## 8. si se llevara todo a aws (mejora futura)
+
+no lo hice porque el learner lab no deja crear roles iam y msk, rds y alb cuestan, pero el proyecto ya esta preparado: cada servicio es una imagen, la config sale del config-server y lo que cambia entre ambientes va por variables de entorno.
+
+| local | aws |
+|---|---|
+| imagenes construidas con docker compose | **ecr**, un repositorio por servicio |
+| contenedores del compose, `--scale` | **ecs fargate**, un servicio por microservicio, con autoescalado por cpu |
+| kafka en una ec2 | **amazon msk** con 3 brokers (uno por zona) y `KAFKA_REPLICAS=3` |
+| mysql con un schema por servicio (`mysql/init.sh`) | **rds mysql**, idealmente una por servicio |
+| https autofirmado en el gateway | **alb** con certificado de **acm** delante del gateway |
+| `.env` | **secrets manager**, inyectado en las task definitions |
+| `docker compose logs` | **cloudwatch logs**, buscando por traceId |
+| `docker compose run batch` | tarea ecs programada con eventbridge, con reintento |

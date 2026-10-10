@@ -12,7 +12,7 @@ evaluacion final transversal (PBY2203). este proyecto parte de lo que venia haci
 - un solo `docker-compose.yaml` que levanta todo (mysql, kafka, kafka-ui y los 12 servicios)
 - kafka tambien puede correr en una **ec2 de aws** (playbook de ansible en `infra/ansible/`) y el compose local se conecta a ese broker
 
-como se ejecuta y prueba cada cosa paso a paso esta en [instrucciones.md](instrucciones.md), y como se llevaria a aws en [despliegue.md](despliegue.md).
+como se ejecuta y prueba cada cosa paso a paso esta en [instrucciones.md](instrucciones.md), y el despliegue (todo local + kafka en una ec2 del learner lab con ansible) en [despliegue.md](despliegue.md).
 
 ## arquitectura
 
@@ -139,7 +139,7 @@ los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en mo
 - **consistencia**: no hay transacciones distribuidas, es una saga: ms-pagos guarda la operacion, pide debito y credito a ms-cuentas (idempotentes por operationId) y si el credito falla pide la reversa del debito. si ms-cuentas no responde para revertir, la operacion queda `COMPENSACION_PENDIENTE` y un reconciliador la termina cada 15s. el evento se guarda en la misma transaccion que cierra la operacion (outbox), asi nunca se publica algo que no paso ni se pierde algo que si.
 - **monitoreo**: actuator en todos (`health`, `metrics`, `circuitbreakers`), traceId/spanId en los logs (micrometer tracing) para seguir una operacion por varios servicios, y kafka-ui.
 - **escalado horizontal**: ms-*, bff-* y notificaciones se escalan con `--scale`. probado con 2 replicas de ms-cuentas.
-- **docker / aws**: un Dockerfile por servicio y un compose. el despliegue a aws (ecr, ecs fargate o ec2, msk, rds, alb con acm, secrets manager, cloudwatch, autoescalado) esta en [despliegue.md](despliegue.md), con un playbook de ansible en `infra/ansible/` para el camino ec2.
+- **docker / aws**: un Dockerfile por servicio y un solo compose que levanta todo en local. en aws (learner lab) se despliega solo kafka, en una ec2 que arma el playbook de `infra/ansible/`, y los microservicios locales se conectan a ese broker con `KAFKA_BOOTSTRAP=<ip publica>:9094` (asi lo pidio el profe, sin alb). el paso a paso, la evidencia y la mejora futura a ecs/msk/rds estan en [despliegue.md](despliegue.md).
 
 ## evidencias
 
