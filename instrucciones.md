@@ -1,15 +1,15 @@
-# instrucciones: como levantar y probar cada parte
+# Instrucciones: como levantar y probar cada parte
 
 todo lo de aca lo corri en mi mac con colima (4 cpu, 8gb) y `docker-compose` 5.5. lo que muestra cada paso esta en [evidencias/](evidencias/). en linux el comando suele ser `docker compose` (con espacio), funciona igual.
 
-## 0. requisitos
+## 0. Requisitos
 
 - docker con compose (colima, docker desktop o docker en linux)
 - curl y openssl (los usa `scripts/token.sh`)
 - python3 solo para formatear json en algunos comandos (opcional)
 - java 21 y maven solo si quieres correr los tests o algun servicio fuera de docker
 
-## 1. levantar todo
+## 1. Levantar todo
 
 ```bash
 cp .env.example .env          # y cambiar las claves si quieres
@@ -25,7 +25,7 @@ docker-compose ps             # esperar que todos digan (healthy), menos kafka-u
 
 paginas para mirar en el navegador:
 
-| que | url |
+| Que | URL |
 |---|---|
 | eureka | http://localhost:8761 |
 | kafka-ui | http://localhost:8090 |
@@ -33,7 +33,7 @@ paginas para mirar en el navegador:
 | rutas del gateway | https://localhost:8443/actuator/gateway/routes |
 | metadata oauth2 | https://localhost:8443/.well-known/openid-configuration |
 
-## 2. tokens (oauth2)
+## 2. Tokens (OAuth2)
 
 el auth-server no tiene puerto propio, todo pasa por el gateway en https. el certificado es autofirmado, por eso los curl van con `-k`.
 
@@ -51,7 +51,7 @@ echo $ATM | cut -d. -f2 | tr '_-' '/+' | base64 -d
 
 el script hace lo mismo que un navegador: `/oauth2/authorize` -> login -> code -> `/oauth2/token`. los tokens duran 5 minutos, si algo da 401 de repente hay que sacarlos de nuevo.
 
-## 3. los 3 bff por el gateway
+## 3. Los 3 BFF por el gateway
 
 ```bash
 curl -sk -H "Authorization: Bearer $WEB" $G/api/web/me/dashboard        # perfil + cuentas + movimientos
@@ -69,7 +69,7 @@ curl -sk -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $ATM" $G/api
 curl -sk -H "Authorization: Bearer $ATM_OTRO" $G/api/atm/cuentas/101/saldo                                # 403 la cuenta no es de other
 ```
 
-## 4. operaciones (ms-pagos -> ms-cuentas) y eventos kafka
+## 4. Operaciones (ms-pagos -> ms-cuentas) y eventos Kafka
 
 todas las operaciones llevan `Idempotency-Key`: si se manda 2 veces la misma, devuelve el mismo comprobante y no cobra 2 veces.
 
@@ -123,7 +123,7 @@ curl -sk -X POST -H "Authorization: Bearer $OPS" $G/api/notificaciones/listeners
 curl -sk -X POST -H "Authorization: Bearer $OPS" $G/api/notificaciones/listeners/transaccionesListener/reanudar
 ```
 
-## 5. resilience4j y fallback
+## 5. Resilience4j y fallback
 
 config (en `config-repo/application.yml`): retry de 3 intentos cada 100 ms, circuito con ventana de 10, minimo 4 llamadas, se abre con 50 % de fallas y queda abierto 15s. la salida de estos mismos comandos esta en `evidencias/resiliencia.txt`.
 
@@ -162,7 +162,7 @@ docker-compose start bff-atm
 
 los endpoints `/actuator/circuitbreakers`, `/actuator/circuitbreakerevents`, `/actuator/retries` y `/actuator/retryevents` estan abiertos sin token (no muestran datos de clientes). como los bff y ms-pagos no tienen puerto hacia afuera se consultan con `docker-compose exec ... wget`.
 
-## 6. escalado y eureka
+## 6. Escalado y Eureka
 
 ```bash
 docker-compose up -d --scale ms-cuentas=2
@@ -176,7 +176,7 @@ for c in $(docker-compose ps -q ms-cuentas); do echo "$(docker inspect -f {{.Nam
 
 lo mismo sirve para `ms-pagos`, `ms-clientes`, los bff y `notificaciones` (ninguno tiene `container_name` ni puerto publicado).
 
-## 7. spring cloud config
+## 7. Spring Cloud Config
 
 ```bash
 source .env
@@ -186,7 +186,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8888/ms-pagos/default 
 
 la carpeta `config-repo/` esta montada en el contenedor, si cambio un yml basta con reiniciar el servicio (`docker-compose restart ms-pagos`), no hay que reconstruir.
 
-## 8. batch
+## 8. Spring Batch
 
 los jobs no parten con el `up`, son contenedores que corren y terminan:
 
@@ -217,13 +217,13 @@ los reportes csv (omitidos, resumen diario, auditoria) quedan en el volumen `bat
 
 los resultados de cada job (con las lineas `Fin job=... read=... write=... descartadas=...` y `Tasa de omision`) quedaron en `evidencias/batch-*.txt`.
 
-## 9. tests
+## 9. Tests
 
 ```bash
 mvn package     # 34 tests, no necesitan docker (h2 en modo mysql, kafka mockeado)
 ```
 
-## 10. correr un servicio fuera de docker (desde el ide)
+## 10. Correr un servicio fuera de Docker (desde el IDE)
 
 con el compose arriba se puede bajar un servicio y correrlo en el ide. por ejemplo ms-pagos:
 
@@ -234,7 +234,7 @@ CONFIG_PASSWORD=... DB_PASSWORD=... PAGOS_CLIENT_SECRET=... mvn -pl ms-pagos spr
 
 ojo que mysql y el auth-server no tienen puerto hacia el mac, para eso hay que agregarles `ports` en el compose. el gateway fuera de docker necesita el certificado: `scripts/certificado.sh`.
 
-## 11. kafka en la nube (ec2)
+## 11. Kafka en la nube (EC2)
 
 en la entrega todo corre local y en aws (learner lab) va solo kafka, en una ec2 que arma el playbook de `infra/ansible/` (requisitos, puertos, alternativa con aws-cli y limpieza en [despliegue.md](despliegue.md)). al final `deploy.yml` imprime la ip. despues aca en local:
 
@@ -249,6 +249,6 @@ docker-compose exec ms-pagos env | grep KAFKA
 
 ms-pagos crea los topicos si no existen (el playbook tambien los crea). para volver al kafka local: `COMPOSE_PROFILES=kafka-local`, borrar `KAFKA_BOOTSTRAP` y `docker-compose up -d`.
 
-### evidencia kafka en ec2
+### Evidencia Kafka en EC2
 
 los comandos para mostrar la instancia, los contenedores y topicos por ssh, el `KAFKA_BOOTSTRAP` de los servicios locales y un evento producido aca y leido en la ec2, junto con la lista de capturas, estan en [despliegue.md, seccion 5](despliegue.md#5-evidencia).

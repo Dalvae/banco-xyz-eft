@@ -1,4 +1,4 @@
-# banco xyz - eft desarrollo backend III
+# Banco XYZ - EFT Desarrollo Backend III
 
 repo: https://github.com/Dalvae/banco-xyz-eft
 
@@ -14,7 +14,7 @@ evaluacion final transversal (PBY2203). este proyecto parte de lo que venia haci
 
 como se ejecuta y prueba cada cosa paso a paso esta en [instrucciones.md](instrucciones.md), y el despliegue (todo local + kafka en una ec2 del learner lab con ansible) en [despliegue.md](despliegue.md).
 
-## arquitectura
+## Arquitectura
 
 ```mermaid
 flowchart TB
@@ -47,9 +47,9 @@ todos los servicios piden su config al config-server y se registran en eureka (e
 
 el flujo de un retiro en el cajero: `curl -k https://localhost:8443/api/atm/cuentas/101/retiros` -> el gateway lo manda a una instancia de bff-atm (por eureka) -> bff-atm valida el token (audiencia `bank-atm`, scope `atm:withdraw`) y llama a `ms-pagos` -> ms-pagos guarda la operacion, le pide el debito a `ms-cuentas` con su propio token client_credentials y deja el evento en el outbox -> el outbox lo publica en `banco.transacciones` (y en `banco.alertas-seguridad` si es de $150.000 o mas) -> notificaciones lo consume y lo guarda.
 
-## servicios y puertos
+## Servicios y puertos
 
-| servicio | puerto | hacia afuera | que hace |
+| Servicio | Puerto | Hacia afuera | Que hace |
 |---|---|---|---|
 | api-gateway | 8443 | **si (https)** | unica entrada. rutas `lb://` a los bff, circuit breaker con fallback, tambien pasa `/oauth2` y `/login` al auth-server |
 | config-server | 8888 | si (con clave) | spring cloud config native, lee `config-repo/` |
@@ -69,7 +69,7 @@ el flujo de un retiro en el cajero: `curl -k https://localhost:8443/api/atm/cuen
 
 los 3 ms, los 3 bff y notificaciones no tienen `container_name` ni puerto publicado, asi se pueden escalar con `--scale`.
 
-## estructura
+## Estructura
 
 ```
 shared/          lo comun: cliente http con @LoadBalanced, seguridad (resource server), eventos kafka, dtos
@@ -89,7 +89,7 @@ infra/ansible/   playbook para el despliegue en ec2 (ver despliegue.md)
 evidencias/      salidas de terminal y capturas
 ```
 
-## como ejecutar (resumen)
+## Como ejecutar (resumen)
 
 necesitas docker con compose (yo use colima con 8gb y 4 cpu en un mac arm; todas las imagenes son multi-arquitectura, asi que en un linux x86_64 funciona igual) y curl + openssl. java no hace falta porque las imagenes compilan adentro. en mi mac el comando es `docker-compose`, en linux casi siempre es `docker compose`, da lo mismo.
 
@@ -106,9 +106,9 @@ el detalle con todos los curl esta en [instrucciones.md](instrucciones.md).
 
 los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en modo mysql y kafka mockeado).
 
-## como se cubre cada requisito
+## Como se cubre cada requisito
 
-### parte 1: batch
+### Parte 1: Spring Batch
 
 - **3 jobs** read/process/write: `transaccionesJob` (movimientos diarios, detecta anomalias y deja un resumen por dia), `interesesJob` (intereses trimestrales sobre ahorro y prestamos) y `estadoCuentaJob` (estados de cuenta anuales + reporte de auditoria). cada uno con `FlatFileItemReader` -> processor que normaliza y valida -> `JdbcBatchItemWriter`.
 - **excepciones y reintentos**: los datos malos (fecha invalida, monto vacio, tipo raro) se saltan con una `SkipPolicy` y quedan en la tabla `omitidos` y en un csv. los fallos temporales de la bd (`TransientDataAccessException`) se reintentan 3 veces con backoff exponencial.
@@ -117,7 +117,7 @@ los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en mo
 - se reutilizaron los componentes de spring batch de la sumativa 1 (readers, processors, writers, skip policy, particionado), adaptados a fin_legacy_data: el esquema de columnas es el mismo, cambian los nombres de archivo (`movimientos_financieros_diarios.csv`, `intereses_trimestrales.csv`, `estados_financieros_anuales.csv`), que se configuran en `application.properties` sin renombrar los csv. los tipos raros como `invalido` o `desconocido` caen en la omision `tipo_no_permitido`.
 - los csv estan en `batch/data/semana_1..3`, por defecto procesa `semana_3` (1000 filas por archivo). resultado con semana_3: transacciones 392 escritas / 608 descartadas (60,8 %, umbral 70 %), intereses 375 / 625 (62,5 %, umbral 85 %), estados de cuenta 604 / 396 (39,6 %, umbral 45 %). los umbrales de la sumativa 1 alcanzaron, no hubo que recalibrar.
 
-### parte 2: bff
+### Parte 2: BFF
 
 - **bff-web**: datos completos (perfil, todas las cuentas con saldo, movimientos paginados, operaciones) y las operaciones de escritura.
 - **bff-mobile**: una sola llamada `/me/inicio` con lo esencial, sin datos personales extra.
@@ -126,7 +126,7 @@ los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en mo
 - **https y tokens**: el gateway es la unica entrada y va en https con un certificado pkcs12 autofirmado que se genera en el Dockerfile (en local con `scripts/certificado.sh`). el login y los tokens tambien pasan por el gateway. adentro de la red de docker va en http (en aws el https lo termina el alb con acm).
 - los bff son independientes: cada uno su modulo, su imagen y su config.
 
-### parte 3: microservicios con spring cloud
+### Parte 3: Microservicios con Spring Cloud
 
 - **3 microservicios** con su propia base (database per service: schema y usuario de mysql distintos, ms-pagos no puede leer las tablas de ms-cuentas).
 - **spring cloud config**: `config-server` con perfil native. cada servicio solo tiene su nombre y puerto en el `application.properties`, lo demas (bd, eureka, seguridad, resilience4j, rutas del gateway) sale de `config-repo/`.
@@ -140,11 +140,11 @@ los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en mo
 - **escalado horizontal**: ms-*, bff-* y notificaciones se escalan con `--scale`. probado con 2 replicas de ms-cuentas.
 - **docker / aws**: un Dockerfile por servicio y un solo compose que levanta todo en local. en aws (learner lab) se despliega solo kafka, en una ec2 que arma el playbook de `infra/ansible/`, y los microservicios locales se conectan a ese broker con `KAFKA_BOOTSTRAP=<ip publica>:9094` (asi lo pidio el profe, sin alb). el paso a paso, la evidencia y la mejora futura a ecs/msk/rds estan en [despliegue.md](despliegue.md).
 
-## evidencias
+## Evidencias
 
 en [evidencias/](evidencias/) (todas del 2026-10-10, con el compose arriba en colima):
 
-| archivo | que muestra |
+| Archivo | Que muestra |
 |---|---|
 | `00-mvn-package.txt` | `mvn package` en verde, 34 tests en 13 modulos |
 | `01-e2e.txt` | tokens por el gateway, los 3 bff, 401/403 por canal, retiro, deposito, transferencia, pago, saga que devuelve la plata, idempotencia, abrir/cerrar cuenta, perfil, notificaciones y el grupo de consumidores de kafka |
@@ -170,7 +170,7 @@ capturas en [evidencias/capturas/](evidencias/capturas/):
 
 ![circuito abierto](evidencias/capturas/11-circuitbreakers-open.webp)
 
-## cosas que faltaron o simplifique
+## Cosas que faltaron o simplifique
 
 - kafka quedo en 1 broker (en s8 tenia 3), igual que el de la ec2. lo baje antes de medir para no arriesgarme con los 8gb de colima y 12 servicios java; al final todo arriba usa ~2,9 gb, asi que probablemente 3 brokers tambien cabian, pero no lo probe.
 - en aws solo esta kafka (lo pidio el profe asi), el resto corre local. el camino completo a ecs/rds/msk quedo como mejora en despliegue.md.

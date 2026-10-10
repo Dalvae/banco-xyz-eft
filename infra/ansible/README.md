@@ -1,10 +1,10 @@
-# kafka en una ec2 con ansible
+# Kafka en una EC2 con Ansible
 
 En AWS va solo kafka (1 broker kraft + kafka-ui) en una ec2 t3.medium, us-east-1, sin ALB ni balanceador.
 El resto del sistema corre local con `docker compose` y se conecta a este kafka.
 Pensado para AWS Academy Learner Lab (no crea roles iam), pero sirve en una cuenta normal.
 
-## pasos
+## Pasos
 
 ```bash
 cd infra/ansible
@@ -41,7 +41,7 @@ Variables en `group_vars/all.yml`: `instance_type`, `kafka_externo_port` (9094),
 `topicos` (`banco.transacciones` con 3 particiones, `banco.alertas-seguridad` con 1), `instance_profile`.
 La ami se busca sola por ssm (no esta fija). No hay claves ni vault: kafka va en plaintext y protegido solo por el security group.
 
-## ojo con el lab
+## Ojo con el lab
 
 - el lab se apaga solo a las 4 horas (o cuando uno termina la sesion): hay que volver a iniciarlo.
 - al reiniciar la ec2 la ip publica cambia: kafka anuncia la ip vieja, asi que hay que correr

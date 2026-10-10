@@ -1,4 +1,4 @@
-# despliegue
+# Despliegue
 
 el sistema completo corre local con docker compose. en aws (learner lab) se despliega **solo kafka**, en una ec2 que arma un playbook de ansible, y los microservicios locales se conectan a ese broker remoto. asi lo pidio el profe, por eso no hay alb ni balanceador de aws: el balanceo y enrutamiento lo hacen spring cloud gateway + loadbalancer + eureka, igual que en local.
 
@@ -18,7 +18,7 @@ flowchart LR
     ui --- kafka
 ```
 
-## 1. requisitos
+## 1. Requisitos
 
 - **aws academy learner lab**: entrar al curso, "Start Lab" y esperar que el circulo quede verde.
 - **credenciales**: en "AWS Details" -> "AWS CLI: Show", copiar el bloque completo (trae `aws_access_key_id`, `aws_secret_access_key` y `aws_session_token`) a `~/.aws/credentials` como perfil `[default]`. son temporales, cada vez que se reinicia el lab hay que pegarlas de nuevo.
@@ -29,7 +29,7 @@ flowchart LR
 - **llave ssh**: en "AWS Details" bajar `labsuser.pem` (es el key pair `vockey` que ya existe en el lab), dejarla en `~/.ssh/labsuser.pem` y `chmod 600 ~/.ssh/labsuser.pem`.
 - **local**: docker con compose, ansible (`brew install ansible` o `pipx install ansible`), aws-cli v2, curl y openssl.
 
-## 2. levantar todo local
+## 2. Levantar todo local
 
 ```bash
 cp .env.example .env
@@ -39,7 +39,7 @@ docker compose ps                # esperar que todo diga (healthy)
 
 con el `.env` de ejemplo (`COMPOSE_PROFILES=kafka-local`) kafka y kafka-ui corren tambien en local. el paso a paso con todos los curl esta en [instrucciones.md](instrucciones.md).
 
-## 3. kafka en ec2 con ansible
+## 3. Kafka en EC2 con Ansible
 
 ```bash
 cd infra/ansible
@@ -59,7 +59,7 @@ al final `deploy.yml` imprime la linea para el `.env`: `KAFKA_BOOTSTRAP=<ip publ
 
 el security group abre solo 3 puertos y solo para mi ip (`mi_ip`):
 
-| puerto | para que |
+| Puerto | Para que |
 |---|---|
 | 22 | ssh, para ansible y para sacar la evidencia |
 | 9094 | el listener externo de kafka, el que usan ms-pagos y notificaciones desde mi maquina |
@@ -67,7 +67,7 @@ el security group abre solo 3 puertos y solo para mi ip (`mi_ip`):
 
 kafka va en plaintext (sin tls ni usuario), por eso es importante que el 9094 no quede abierto a todo internet. el 9092 (listener interno) no se abre.
 
-## 4. conectar lo local al kafka de la ec2
+## 4. Conectar lo local al Kafka de la EC2
 
 en el `.env` de la raiz:
 
@@ -91,7 +91,7 @@ docker compose logs notificaciones | grep -m1 "bootstrap.servers"
 
 si la ec2 no responde un rato las operaciones igual se hacen: el evento queda en el outbox de ms-pagos y se manda solo cuando vuelve kafka.
 
-## 5. evidencia
+## 5. Evidencia
 
 con la ec2 arriba y el compose local apuntando a ella, estos son los comandos para mostrar que kafka corre en aws y que los microservicios lo usan:
 
@@ -133,7 +133,7 @@ capturas para el informe y el video:
 - kafka-ui en `http://<ip>:8090`: el broker, el topico `banco.transacciones` con el mensaje de la transferencia y el consumidor `notificaciones`
 - `docker compose ps` local sin el contenedor kafka y el `env | grep KAFKA` de ms-pagos
 
-## 6. alternativa manual con aws-cli
+## 6. Alternativa manual con aws-cli
 
 lo mismo que hace ansible, pero a mano:
 
@@ -177,7 +177,7 @@ echo "KAFKA_BOOTSTRAP=$IP:9094"
 
 los topicos los crea ms-pagos al partir (y el playbook por si acaso). despues se sigue desde el paso 4.
 
-## 7. limpieza
+## 7. Limpieza
 
 ```bash
 cd infra/ansible
@@ -192,11 +192,11 @@ ojo con el learner lab:
 - al volver a prender, la ec2 cambia de ip publica y kafka sigue anunciando la vieja: hay que correr `provision.yml` y `deploy.yml` de nuevo y actualizar `KAFKA_BOOTSTRAP` en el `.env`.
 - si cambia mi ip (otra red), `provision.yml` actualiza el security group.
 
-## 8. si se llevara todo a aws (mejora futura)
+## 8. Si se llevara todo a AWS (mejora futura)
 
 no lo hice porque el learner lab no deja crear roles iam y msk, rds y alb cuestan, pero el proyecto ya esta preparado: cada servicio es una imagen, la config sale del config-server y lo que cambia entre ambientes va por variables de entorno.
 
-| local | aws |
+| Local | AWS |
 |---|---|
 | imagenes construidas con docker compose | **ecr**, un repositorio por servicio |
 | contenedores del compose, `--scale` | **ecs fargate**, un servicio por microservicio, con autoescalado por cpu |
