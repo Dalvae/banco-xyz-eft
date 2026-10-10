@@ -28,7 +28,7 @@ RUN mvn -q -B package -DskipTests || mvn -q -B package -DskipTests
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 # el keystore pkcs12 autofirmado se genera aca con keytool, asi un clone limpio funciona sin pasos extra.
-# no se sube al repo (*.p12 esta en el .gitignore). en aws el https lo termina el alb con un certificado de acm
+# no se sube al repo (*.p12 esta en el .gitignore). no hay alb, el https lo hace el mismo gateway
 ARG GATEWAY_KEYSTORE_PASSWORD=changeit
 RUN keytool -genkeypair -alias gateway -keyalg RSA -keysize 2048 -validity 365 \
       -storetype PKCS12 -keystore /app/gateway.p12 -storepass "$GATEWAY_KEYSTORE_PASSWORD" \

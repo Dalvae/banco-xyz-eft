@@ -64,8 +64,8 @@ services:
       retries: 15
     networks: [banco-net]
 
-  # 1 broker kraft (broker y controller a la vez). en s8 tenia 3 con replication factor 3, pero con los
-  # 12 servicios java no alcanzaba la ram de colima. en aws va msk con 3 brokers (ver despliegue.md)
+  # 1 broker kraft (broker y controller a la vez). en s8 tenia 3 con replication factor 3, aca lo deje en 1
+  # para no pasarme de la ram de colima con 12 servicios java. es igual al que levanta ansible en la ec2
   kafka:
     image: apache/kafka:3.9.1
     container_name: kafka

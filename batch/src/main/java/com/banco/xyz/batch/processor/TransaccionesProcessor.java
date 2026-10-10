@@ -16,7 +16,7 @@ public class TransaccionesProcessor implements ItemProcessor<TransaccionesDTO, T
         this.omisiones = omisiones;
     }
 
-    /** Filtra en vez de omitir: omitir revierte el chunk y lo reprocesa item por item (EVIDENCIA § 4). */
+    /** Filtra en vez de omitir: omitir revierte el chunk y lo reprocesa item por item (lo medí en la sumativa 1, era más lento). */
     @Override
     public TransaccionesEntity process(TransaccionesDTO dto) {
         try {

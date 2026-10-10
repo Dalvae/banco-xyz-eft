@@ -7,7 +7,7 @@ spring:
         webflux:
           # desde la 2025.0 el gateway no agrega los X-Forwarded-* si no se le dice de que ips confiar.
           # sin esto el auth-server armaba los redirect con http://auth-server:9000 (me costo cachar esto).
-          # son las redes privadas: docker, colima y en aws la vpc donde esta el alb
+          # son las redes privadas: la red de docker y la de colima (no hay alb ni otro proxy delante)
           trusted-proxies: (10|127|172|192\.168)\..*
           routes:
             - id: bff-web

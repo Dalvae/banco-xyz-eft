@@ -1,6 +1,6 @@
 package com.banco.xyz.batch.config;
 
-/** Óptimos del barrido de EVIDENCIA.md § 4. Se sobrescriben por propiedad o línea de comandos. */
+/** Óptimos que medí en la sumativa 1 (grid y pool a la mitad de los núcleos, chunk 100). Se sobrescriben por propiedad o línea de comandos. */
 final class EscaladoDefaults {
 
     private static final String MITAD_DE_NUCLEOS =
