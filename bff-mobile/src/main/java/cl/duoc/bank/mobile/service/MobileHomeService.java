@@ -23,7 +23,7 @@ public class MobileHomeService {
     private final Executor aggregationExecutor;
 
     public MobileHomeService(BankClient bankClient,
-            @Qualifier("mobileAggregationExecutor") Executor aggregationExecutor) {
+            @Qualifier("aggregationExecutor") Executor aggregationExecutor) {
         this.bankClient = bankClient;
         this.aggregationExecutor = aggregationExecutor;
     }

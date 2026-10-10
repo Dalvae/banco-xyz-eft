@@ -24,7 +24,7 @@ public class WebDashboardService {
     private final Executor aggregationExecutor;
 
     public WebDashboardService(BankClient bankClient,
-            @Qualifier("webAggregationExecutor") Executor aggregationExecutor) {
+            @Qualifier("aggregationExecutor") Executor aggregationExecutor) {
         this.bankClient = bankClient;
         this.aggregationExecutor = aggregationExecutor;
     }
