@@ -44,8 +44,9 @@ resilience4j:
   retry:
     configs:
       default:
+        # 3 intentos en total, cada 100ms. solo si el otro no responde o da 5xx
         max-attempts: 3
-        wait-duration: 500ms
+        wait-duration: 100ms
         retry-exceptions:
           - org.springframework.web.client.ResourceAccessException
           - org.springframework.web.client.HttpServerErrorException
@@ -55,7 +56,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,circuitbreakers,circuitbreakerevents
+        include: health,info,metrics,circuitbreakers,circuitbreakerevents,retries,retryevents
   endpoint:
     health:
       show-details: always

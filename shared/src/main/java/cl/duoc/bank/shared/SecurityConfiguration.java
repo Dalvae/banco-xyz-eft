@@ -21,8 +21,9 @@ public class SecurityConfiguration {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // health y el estado del circuito abiertos para la demo
-                        .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/circuitbreakers", "/actuator/circuitbreakerevents").permitAll()
+                        // health, el estado del circuito y los reintentos abiertos para la demo (no tienen datos de clientes)
+                        .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/circuitbreakers", "/actuator/circuitbreakerevents",
+                                "/actuator/retries", "/actuator/retryevents/**").permitAll()
                         .requestMatchers("/error").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()));

@@ -24,7 +24,9 @@ public class HttpConfig {
     RestClient.Builder loadBalancedRestClientBuilder(RestClientBuilderConfigurer configurer) {
         // el configurer de boot le pone la observacion, asi el traceId viaja en los headers
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(2000);
+        // connect corto: si la instancia murio (ip que ya no existe) cada intento del retry se demoraba 2s y
+        // los 3 de ms-pagos pasaban el read timeout del bff. adentro de la red de docker conectar es instantaneo
+        factory.setConnectTimeout(500);
         factory.setReadTimeout(3000);
         return configurer.configure(RestClient.builder()).requestFactory(factory);
     }
