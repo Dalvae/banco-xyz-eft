@@ -251,39 +251,4 @@ ms-pagos crea los topicos si no existen (el playbook tambien los crea). para vol
 
 ### evidencia kafka en ec2
 
-con la ec2 arriba y el compose apuntando a ella:
-
-```bash
-# 1. la instancia (id, tipo, estado, ip y dns publico)
-aws ec2 describe-instances --filters Name=tag:Project,Values=banco-xyz-eft Name=instance-state-name,Values=running \
-  --query 'Reservations[].Instances[].{Id:InstanceId,Tipo:InstanceType,Estado:State.Name,IP:PublicIpAddress,DNS:PublicDnsName}' --output table
-
-# 2. dentro de la ec2: contenedores y topicos
-ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'hostname; cd /opt/kafka-banco && docker compose ps'
-ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-topics.sh --describe --exclude-internal --bootstrap-server localhost:9092'
-
-# 3. que ms-pagos y notificaciones (locales) apuntan a la ec2
-docker compose exec ms-pagos env | grep KAFKA
-docker compose logs notificaciones | grep -m1 "bootstrap.servers"
-
-# 4. una transferencia por el gateway
-WEB=$(scripts/token.sh web)
-curl -sk -H "Authorization: Bearer $WEB" -H "Idempotency-Key: ec2-$(date +%s)" -H 'Content-Type: application/json' \
-     -d '{"fromAccount":101,"toAccount":102,"amount":4321}' https://localhost:8443/api/web/transferencias | tee /tmp/transferencia.json
-OP=$(sed -n 's/.*"operationId":"\([^"]*\)".*/\1/p' /tmp/transferencia.json); echo $OP
-
-# 5. ese evento leido dentro de la ec2 (lee todo el topico y filtro por el operationId de la transferencia)
-ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> "docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
-  --topic banco.transacciones --from-beginning --timeout-ms 10000 --property print.key=true 2>/dev/null" | grep "$OP"
-
-# 6. notificaciones (local) lo consumio desde la ec2, y el grupo quedo con lag 0
-OPS=$(scripts/token.sh ops)
-curl -sk -H "Authorization: Bearer $OPS" https://localhost:8443/api/notificaciones | grep -o "{[^}]*${OP}[^}]*}"
-ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group notificaciones'
-```
-
-capturas que hay que sacar a mano para el informe:
-
-- kafka-ui de la ec2 en `http://<ip>:8090`: topics -> `banco.transacciones` -> messages (con el evento de la transferencia) y consumers -> `notificaciones`
-- la consola de aws (ec2 -> instances) con la instancia `banco-xyz-eft` en running y su ip publica
-- la terminal con la sesion ssh (`ssh -i ~/.ssh/labsuser.pem ec2-user@<ip>` y `docker compose ps`)
+los comandos para mostrar la instancia, los contenedores y topicos por ssh, el `KAFKA_BOOTSTRAP` de los servicios locales y un evento producido aca y leido en la ec2, junto con la lista de capturas, estan en [despliegue.md, seccion 5](despliegue.md#5-evidencia).
