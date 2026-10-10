@@ -26,7 +26,8 @@ x-java-env: &java-env
   AUTH_URL: http://auth-server:9000
   MYSQL_HOST: mysql
   DB_PASSWORD: ${DB_PASSWORD}
-  KAFKA_BOOTSTRAP: kafka:9092
+  # por defecto el kafka del compose. con el playbook de infra/ansible se apunta al kafka en ec2 (KAFKA_BOOTSTRAP=<ip>:9094 en el .env)
+  KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:9092}
 
 # los microservicios esperan a que esten la config, eureka, el auth-server y la bd
 x-depende-base: &depende-base
