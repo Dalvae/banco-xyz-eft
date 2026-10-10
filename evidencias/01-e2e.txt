@@ -1,0 +1,119 @@
+# 2026-10-10 19:06:24 - recorrido por el api-gateway (https://localhost:8443)
+
+$ curl -sk $G/.well-known/openid-configuration | head -c 200
+{"issuer":"http://auth-server:9000","authorization_endpoint":"http://auth-server:9000/oauth2/authorize","device_authorization_endpoint":"http://auth-server:9000/oauth2/device_authorization","token_end
+
+$ WEB=$(scripts/token.sh web); MOB=$(scripts/token.sh mobile); ATM=$(scripts/token.sh atm); ATM_OTRO=$(scripts/token.sh atm other); OPS=$(scripts/token.sh ops)
+largo de los tokens: web=680 mobile=672 atm=707 atm(other)=708 ops=742
+$ echo $ATM | cut -d. -f2 | base64 -d   # payload del token del cajero
+{"sub":"demo","aud":"bank-atm","nbf":1791669985,"scope":["atm:balance","atm:deposit","atm:withdraw"],"iss":"http://auth-server:9000","exp":1791670285,"iat":1791669985,"jti":"b6c8dd26-51b4-4c3d-8d75-203145448f7b
+
+## bff por canal
+$ curl -sk -H "Authorization: Bearer $WEB" $G/api/web/me/dashboard | head -c 700
+{"profile":{"id":"demo","name":"Cliente Demo","email":"demo@bancoxyz.cl","phone":"+56911111111","segment":"PERSONAS"},"accounts":[{"id":101,"displayName":"Cuenta corriente Demo","maskedNumber":"****0101","currency":"CLP","balance":1000000.00,"status":"ABIERTA","origin":"fixture-demostracion","movements":{"items":[{"id":23,"date":"2024-12-22","type":"deposito","amount":2500.00,"description":"Ingreso navideño","source":"legacy/cuentas_anuales.csv"},{"id":54,"date":"2024-11-23","type":"compra","amount":1500.00,"description":"Compra en tienda","source":"legacy/cuentas_anuales.csv"},{"id":26,"date":"2024-11-22","type":"retiro","amount":1000.00,"description":"","source":"legacy/cuentas_anuales.cs
+
+$ curl -sk -H "Authorization: Bearer $MOB" $G/api/mobile/me/inicio | head -c 500
+{"name":"Cliente Demo","accounts":[{"id":101,"displayName":"Cuenta corriente Demo","maskedNumber":"****0101","currency":"CLP","availableBalance":1000000.00,"movements":[{"id":23,"date":"2024-12-22","type":"deposito","amount":2500.00},{"id":54,"date":"2024-11-23","type":"compra","amount":1500.00},{"id":26,"date":"2024-11-22","type":"retiro","amount":1000.00},{"id":44,"date":"2024-11-11","type":"compra","amount":1000.00},{"id":20,"date":"2024-10-06","type":"deposito","amount":1500.00}]}],"degraded
+
+$ curl -sk -H "Authorization: Bearer $ATM" $G/api/atm/cuentas/101/saldo
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":1000000.00}
+
+## seguridad por canal
+$ curl -sk -o /dev/null -w "sin token -> %{http_code}\n" $G/api/atm/cuentas/101/saldo
+sin token -> 401
+
+
+$ curl -sk -o /dev/null -w "token movil en el cajero -> %{http_code}\n" -H "Authorization: Bearer $MOB" $G/api/atm/cuentas/101/saldo
+token movil en el cajero -> 401
+
+
+$ curl -sk -o /dev/null -w "token del cajero en la web -> %{http_code}\n" -H "Authorization: Bearer $ATM" $G/api/web/me/dashboard
+token del cajero en la web -> 401
+
+
+$ curl -sk -w "\n%{http_code}\n" -H "Authorization: Bearer $ATM_OTRO" $G/api/atm/cuentas/101/saldo
+{"type":"about:blank","title":"Forbidden","status":403,"detail":"La cuenta no pertenece al titular autenticado","instance":"/api/atm/cuentas/101/saldo"}
+403
+
+
+## operaciones (ms-pagos -> ms-cuentas, eventos a kafka)
+$ curl -sk -H "Authorization: Bearer $ATM" -H "Idempotency-Key: ret-$K" -H "Content-Type: application/json" -d "{\"amount\":15000}" $G/api/atm/cuentas/101/retiros
+{"operationId":"2ece40f0-5cf6-4e59-a8f0-79370aa1181e","accountId":101,"amount":15000.00,"availableBalance":985000.00,"status":"COMPLETADA"}
+
+# la misma Idempotency-Key devuelve el mismo comprobante y no descuenta 2 veces
+$ curl -sk -H "Authorization: Bearer $ATM" -H "Idempotency-Key: ret-$K" -H "Content-Type: application/json" -d "{\"amount\":15000}" $G/api/atm/cuentas/101/retiros
+{"operationId":"2ece40f0-5cf6-4e59-a8f0-79370aa1181e","accountId":101,"amount":15000.00,"availableBalance":985000.00,"status":"COMPLETADA"}
+
+$ curl -sk -H "Authorization: Bearer $ATM" -H "Idempotency-Key: dep-$K" -H "Content-Type: application/json" -d "{\"amount\":5000}" $G/api/atm/cuentas/101/depositos
+{"operationId":"cf4104eb-663d-48ae-ae65-79b2b91c8be1","accountId":101,"amount":5000.00,"availableBalance":null,"status":"COMPLETADA"}
+
+$ curl -sk -H "Authorization: Bearer $WEB" -H "Idempotency-Key: tr-$K" -H "Content-Type: application/json" -d "{\"fromAccount\":101,\"toAccount\":102,\"amount\":20000}" $G/api/web/transferencias
+{"operationId":"ee3560d6-fa24-4926-98c8-ab5b31294869","type":"TRANSFERENCIA","fromAccount":101,"toAccount":102,"amount":20000.00,"balance":970000.00,"status":"COMPLETADA","detail":null}
+
+# transferencia grande -> alerta de seguridad MONTO_ALTO
+$ curl -sk -H "Authorization: Bearer $WEB" -H "Idempotency-Key: tr-alta-$K" -H "Content-Type: application/json" -d "{\"fromAccount\":101,\"toAccount\":102,\"amount\":160000}" $G/api/web/transferencias
+{"operationId":"cecbaf87-c2bc-4b61-875b-e88a23a5eb82","type":"TRANSFERENCIA","fromAccount":101,"toAccount":102,"amount":160000.00,"balance":810000.00,"status":"COMPLETADA","detail":null}
+
+$ curl -sk -H "Authorization: Bearer $WEB" -H "Idempotency-Key: pago-$K" -H "Content-Type: application/json" -d "{\"fromAccount\":101,\"biller\":\"ENEL\",\"amount\":12990}" $G/api/web/pagos
+{"operationId":"83de0afa-5a7b-4ce3-8aaf-0705a40c70f7","type":"PAGO","fromAccount":101,"toAccount":null,"amount":12990.00,"balance":797010.00,"status":"COMPLETADA","detail":null}
+
+# transferencia a una cuenta que no existe: se debita, el credito falla y la saga devuelve la plata
+$ curl -sk -H "Authorization: Bearer $WEB" -H "Idempotency-Key: tr-mala-$K" -H "Content-Type: application/json" -d "{\"fromAccount\":101,\"toAccount\":999,\"amount\":1000}" $G/api/web/transferencias
+{"type":"about:blank","title":"Conflict","status":409,"detail":"La cuenta destino no puede recibir (Cuenta no encontrada), el monto se devolvio a la cuenta de origen","instance":"/api/web/transferencias"}
+
+# retiro sobre el maximo del cajero
+$ curl -sk -H "Authorization: Bearer $ATM" -H "Idempotency-Key: ret-max-$K" -H "Content-Type: application/json" -d "{\"amount\":250000}" $G/api/atm/cuentas/101/retiros
+{"type":"about:blank","title":"Bad Request","status":400,"detail":"Validation failure","instance":"/api/atm/cuentas/101/retiros"}
+
+$ curl -sk -H "Authorization: Bearer $WEB" $G/api/web/me/operaciones
+[{"operationId":"83de0afa-5a7b-4ce3-8aaf-0705a40c70f7","type":"PAGO","fromAccount":101,"toAccount":null,"amount":12990.00,"balance":797010.00,"status":"COMPLETADA","detail":null},{"operationId":"cecbaf87-c2bc-4b61-875b-e88a23a5eb82","type":"TRANSFERENCIA","fromAccount":101,"toAccount":102,"amount":160000.00,"balance":810000.00,"status":"COMPLETADA","detail":null},{"operationId":"e0712117-75c5-43d8-bc65-a09ff26f76c9","type":"TRANSFERENCIA","fromAccount":101,"toAccount":999,"amount":1000.00,"balance":null,"status":"REVERTIDA","detail":"Destino rechazo el abono: Cuenta no encontrada"},{"operationId":"2ece40f0-5cf6-4e59-a8f0-79370aa1181e","type":"RETIRO","fromAccount":101,"toAccount":null,"amount":15000.00,"balance":985000.00,"status":"COMPLETADA","detail":null},{"operationId":"cf4104eb-663d-48ae-ae65-79b2b91c8be1","type":"DEPOSITO","fromAccount":null,"toAccount":101,"amount":5000.00,"balance":null,"status":"COMPLETADA","detail":null},{"operationId":"ee3560d6-fa24-4926-98c8-ab5b31294869","type":"TRANSFERENCIA","fromAccount":101,"toAccount":102,"amount":20000.00,"balance":970000.00,"status":"COMPLETADA","detail":null}]
+
+$ curl -sk -H "Authorization: Bearer $ATM" $G/api/atm/cuentas/101/saldo
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
+
+## gestion de cuentas y clientes desde la web
+$ curl -sk -w "\n" -H "Authorization: Bearer $WEB" -H "Content-Type: application/json" -d "{\"displayName\":\"Cuenta ahorro EFT\",\"currency\":\"CLP\"}" $G/api/web/cuentas | tee /tmp/eft-cuenta.json
+{"id":103,"owner":"demo","displayName":"Cuenta ahorro EFT","maskedNumber":"****0103","currency":"CLP","balance":0.00,"status":"ABIERTA","origin":"apertura-web"}
+
+
+$ curl -sk -H "Authorization: Bearer $WEB" -X POST $G/api/web/cuentas/$NUEVA/cierre
+{"id":103,"owner":"demo","displayName":"Cuenta ahorro EFT","maskedNumber":"****0103","currency":"CLP","balance":0.00,"status":"CERRADA","origin":"apertura-web"}
+
+$ curl -sk -H "Authorization: Bearer $WEB" -X PUT -H "Content-Type: application/json" -d "{\"phone\":\"+56933333333\"}" $G/api/web/me/perfil
+{"id":"demo","name":"Cliente Demo","email":"demo@bancoxyz.cl","phone":"+56933333333","segment":"PERSONAS"}
+
+## consumidor kafka (notificaciones, por el gateway con token client_credentials)
+$ curl -sk -H "Authorization: Bearer $OPS" $G/api/notificaciones
+[{"id":6,"eventoId":"83de0afa-5a7b-4ce3-8aaf-0705a40c70f7","topico":"banco.transacciones","tipo":"PAGO","cuentaId":101,"titular":"demo","mensaje":"Pago de $12990.00. Saldo disponible: $797010.00","recibidoEn":"2026-10-10T22:06:32.000+00:00"},{"id":5,"eventoId":"cecbaf87-c2bc-4b61-875b-e88a23a5eb82","topico":"banco.transacciones","tipo":"TRANSFERENCIA","cuentaId":101,"titular":"demo","mensaje":"Transferencia de $160000.00 a la cuenta 102. Saldo disponible: $810000.00","recibidoEn":"2026-10-10T22:06:27.000+00:00"},{"id":4,"eventoId":"ee3560d6-fa24-4926-98c8-ab5b31294869","topico":"banco.transacciones","tipo":"TRANSFERENCIA","cuentaId":101,"titular":"demo","mensaje":"Transferencia de $20000.00 a la cuenta 102. Saldo disponible: $970000.00","recibidoEn":"2026-10-10T22:06:27.000+00:00"},{"id":3,"eventoId":"2ece40f0-5cf6-4e59-a8f0-79370aa1181e","topico":"banco.transacciones","tipo":"RETIRO","cuentaId":101,"titular":"demo","mensaje":"Retiro de $15000.00 en CAJERO. Saldo disponible: $985000.00","recibidoEn":"2026-10-10T22:06:27.000+00:00"},{"id":2,"eventoId":"7864e45c-4fea-43e2-b4ea-bd0dc7453c3a","topico":"banco.alertas-seguridad","tipo":"MONTO_ALTO","cuentaId":101,"titular":"demo","mensaje":"Alerta MONTO_ALTO: TRANSFERENCIA por $160000.00 desde WEB","recibidoEn":"2026-10-10T22:06:27.000+00:00"},{"id":1,"eventoId":"cf4104eb-663d-48ae-ae65-79b2b91c8be1","topico":"banco.transacciones","tipo":"DEPOSITO","cuentaId":101,"titular":"demo","mensaje":"Deposito de $5000.00 en la cuenta 101","recibidoEn":"2026-10-10T22:06:27.000+00:00"}]
+
+$ docker-compose logs notificaciones | grep -E "Evento consumido|ALERTA" | tail -8 | cut -c1-260
+notificaciones-1  | 2026-10-10T22:06:27.308Z  INFO [notificaciones,,] 1 --- [notificaciones] [sListener-0-C-1] [                                                 ] c.d.bank.notificaciones.EventosListener  : Evento consumido de banco.transacciones titular=demo -
+notificaciones-1  | 2026-10-10T22:06:27.308Z  WARN [notificaciones,,] 1 --- [notificaciones] [sListener-0-C-1] [                                                 ] c.d.bank.notificaciones.EventosListener  : ALERTA DE SEGURIDAD MONTO_ALTO titular=demo cuenta=101
+notificaciones-1  | 2026-10-10T22:06:27.312Z  INFO [notificaciones,,] 1 --- [notificaciones] [sListener-0-C-1] [                                                 ] c.d.bank.notificaciones.EventosListener  : Evento consumido de banco.alertas-seguridad titular=de
+notificaciones-1  | 2026-10-10T22:06:27.320Z  INFO [notificaciones,,] 1 --- [notificaciones] [sListener-0-C-1] [                                                 ] c.d.bank.notificaciones.EventosListener  : Evento consumido de banco.transacciones titular=demo -
+notificaciones-1  | 2026-10-10T22:06:27.322Z  INFO [notificaciones,,] 1 --- [notificaciones] [sListener-0-C-1] [                                                 ] c.d.bank.notificaciones.EventosListener  : Evento consumido de banco.transacciones titular=demo -
+notificaciones-1  | 2026-10-10T22:06:27.330Z  INFO [notificaciones,,] 1 --- [notificaciones] [sListener-0-C-1] [                                                 ] c.d.bank.notificaciones.EventosListener  : Evento consumido de banco.transacciones titular=demo -
+notificaciones-1  | 2026-10-10T22:06:32.098Z  INFO [notificaciones,,] 1 --- [notificaciones] [sListener-0-C-1] [                                                 ] c.d.bank.notificaciones.EventosListener  : Evento consumido de banco.transacciones titular=demo -
+
+
+$ docker-compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic banco.transacciones
+Topic: banco.transacciones	TopicId: dafj2226RMaSp8wwvKYdgQ	PartitionCount: 3	ReplicationFactor: 1	Configs: retention.ms=604800000
+	Topic: banco.transacciones	Partition: 0	Leader: 1	Replicas: 1	Isr: 1	Elr: 	LastKnownElr: 
+	Topic: banco.transacciones	Partition: 1	Leader: 1	Replicas: 1	Isr: 1	Elr: 	LastKnownElr: 
+	Topic: banco.transacciones	Partition: 2	Leader: 1	Replicas: 1	Isr: 1	Elr: 	LastKnownElr: 
+
+
+$ docker-compose exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group notificaciones
+
+GROUP           TOPIC                   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID                                                    HOST            CLIENT-ID
+notificaciones  banco.transacciones     2          5               5               0               consumer-notificaciones-1-8b1404ee-d46d-48cc-934c-7e097f6f05d5 /172.19.0.12    consumer-notificaciones-1
+notificaciones  banco.transacciones     1          -               0               -               consumer-notificaciones-1-8b1404ee-d46d-48cc-934c-7e097f6f05d5 /172.19.0.12    consumer-notificaciones-1
+notificaciones  banco.transacciones     0          -               0               -               consumer-notificaciones-1-8b1404ee-d46d-48cc-934c-7e097f6f05d5 /172.19.0.12    consumer-notificaciones-1
+notificaciones  banco.alertas-seguridad 0          1               1               0               consumer-notificaciones-2-b537e495-b0eb-41a1-a74c-c6028b5b23f0 /172.19.0.12    consumer-notificaciones-2
+
+## traceId: la misma operacion en los logs de varios servicios
+$ docker-compose logs ms-pagos | grep "Operacion TRANSFERENCIA" | tail -2 | cut -c1-260
+ms-pagos-1  | 2026-10-10T22:06:26.975Z  INFO [ms-pagos,6acab6e24cca14003f0c2de2e0601690,95a9a97dff505786] 1 --- [ms-pagos] [nio-8082-exec-5] [6acab6e24cca14003f0c2de2e0601690-95a9a97dff505786] cl.duoc.bank.pagos.PagosService          : Operacion TRANSFERENCIA 
+ms-pagos-1  | 2026-10-10T22:06:27.075Z  INFO [ms-pagos,6acab6e3c12bff4917d1094a565d2d22,95a9dbda99dbbfb3] 1 --- [ms-pagos] [nio-8082-exec-6] [6acab6e3c12bff4917d1094a565d2d22-95a9dbda99dbbfb3] cl.duoc.bank.pagos.PagosService          : Operacion TRANSFERENCIA 
+
+

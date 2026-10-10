@@ -1,0 +1,116 @@
+# 2026-10-10 19:14:33 - spring batch, los 3 jobs como contenedor one-shot (csv de batch/data/semana_3)
+
+$ docker-compose run --rm batch --spring.batch.job.name=transaccionesJob
+2026-10-10T22:14:35.152 INFO [main] Inicio job=transaccionesJob executionId=1
+2026-10-10T22:14:35.322 INFO [batch-2] Step: [transaccionesStep:partition-movimientos_financieros_diarios.csv-1] executed in 143ms
+2026-10-10T22:14:35.340 INFO [batch-1] Step: [transaccionesStep:partition-movimientos_financieros_diarios.csv-0] executed in 161ms
+2026-10-10T22:14:35.345 INFO [main] Step: [transaccionesMasterStep] executed in 182ms
+2026-10-10T22:14:35.366 INFO [main] Omitidos job=transaccionesJob total=608 detalle=/app/reportes/transacciones-1-omitidos.csv resumen=/app/reportes/transacciones-1-omitidos-resumen.csv
+2026-10-10T22:14:35.366 INFO [main]   omitidos lectura,campo_invalido_fecha -> 49
+2026-10-10T22:14:35.367 INFO [main]   omitidos proceso,monto_no_positivo -> 141
+2026-10-10T22:14:35.367 INFO [main]   omitidos proceso,tipo_no_permitido -> 256
+2026-10-10T22:14:35.367 INFO [main]   omitidos proceso,monto_ausente -> 162
+2026-10-10T22:14:35.396 INFO [main] Tasa de omisión job=transaccionesJob 608/1000 = 0.608 (umbral 0.7)
+2026-10-10T22:14:35.396 WARN [main] job=transaccionesJob descartó 608 de 1000 registros (60.8%): dentro del umbral, pero es una proporción alta del origen. Revisar el detalle de omitidos antes de dar la carga por buena.
+2026-10-10T22:14:35.396 INFO [main] Fin job=transaccionesJob status=COMPLETED read=951 write=392 descartadas=608 (filtradas=559 omitidas=49)
+2026-10-10T22:14:35.400 INFO [main] job=transaccionesJob termino con status=COMPLETED exit=0
+exit=0
+
+$ docker-compose run --rm batch --spring.batch.job.name=interesesJob
+2026-10-10T22:14:37.219 INFO [main] Inicio job=interesesJob executionId=2
+2026-10-10T22:14:37.376 INFO [batch-2] Step: [interesesStep:partition-intereses_trimestrales.csv-1] executed in 130ms
+2026-10-10T22:14:37.388 INFO [batch-1] Step: [interesesStep:partition-intereses_trimestrales.csv-0] executed in 146ms
+2026-10-10T22:14:37.391 INFO [main] Step: [interesesMasterStep] executed in 164ms
+2026-10-10T22:14:37.403 INFO [main] Omitidos job=interesesJob total=625 detalle=/app/reportes/intereses-2-omitidos.csv resumen=/app/reportes/intereses-2-omitidos-resumen.csv
+2026-10-10T22:14:37.403 INFO [main]   omitidos proceso,fuera_de_alcance -> 166
+2026-10-10T22:14:37.403 INFO [main]   omitidos proceso,tipo_no_permitido -> 255
+2026-10-10T22:14:37.403 INFO [main]   omitidos proceso,saldo_ausente -> 204
+2026-10-10T22:14:37.420 INFO [main] Tasa de omisión job=interesesJob 625/1000 = 0.625 (umbral 0.85)
+2026-10-10T22:14:37.420 WARN [main] job=interesesJob descartó 625 de 1000 registros (62.5%): dentro del umbral, pero es una proporción alta del origen. Revisar el detalle de omitidos antes de dar la carga por buena.
+2026-10-10T22:14:37.420 INFO [main] Fin job=interesesJob status=COMPLETED read=1000 write=375 descartadas=625 (filtradas=625 omitidas=0)
+2026-10-10T22:14:37.422 INFO [main] job=interesesJob termino con status=COMPLETED exit=0
+exit=0
+
+$ docker-compose run --rm batch --spring.batch.job.name=estadoCuentaJob
+2026-10-10T22:14:39.380 INFO [main] Inicio job=estadoCuentaJob executionId=3
+2026-10-10T22:14:39.586 INFO [batch-1] Step: [estadoCuentaStep:partition-estados_financieros_anuales.csv-1] executed in 175ms
+2026-10-10T22:14:39.586 INFO [batch-2] Step: [estadoCuentaStep:partition-estados_financieros_anuales.csv-0] executed in 174ms
+2026-10-10T22:14:39.591 INFO [main] Step: [estadoCuentaMasterStep] executed in 198ms
+2026-10-10T22:14:39.610 INFO [main] Step: [estadoCuentaAggregationStep] executed in 7ms
+2026-10-10T22:14:39.641 INFO [main] Step: [estadoCuentaAuditReportStep] executed in 23ms
+2026-10-10T22:14:39.650 INFO [main] Omitidos job=estadoCuentaJob total=396 detalle=/app/reportes/estadoCuenta-3-omitidos.csv resumen=/app/reportes/estadoCuenta-3-omitidos-resumen.csv
+2026-10-10T22:14:39.650 INFO [main]   omitidos proceso,monto_no_positivo -> 348
+2026-10-10T22:14:39.650 INFO [main]   omitidos proceso,monto_ausente -> 48
+2026-10-10T22:14:39.662 INFO [main] Tasa de omisión job=estadoCuentaJob 396/1000 = 0.396 (umbral 0.45)
+2026-10-10T22:14:39.663 WARN [main] job=estadoCuentaJob descartó 396 de 1000 registros (39.6%): dentro del umbral, pero es una proporción alta del origen. Revisar el detalle de omitidos antes de dar la carga por buena.
+2026-10-10T22:14:39.663 INFO [main] Fin job=estadoCuentaJob status=COMPLETED read=1000 write=604 descartadas=396 (filtradas=396 omitidas=0)
+2026-10-10T22:14:39.665 INFO [main] job=estadoCuentaJob termino con status=COMPLETED exit=0
+exit=0
+
+# conteos en mysql (schema banco_xyz_batch)
+$ docker-compose exec mysql mysql -ubatch -p... banco_xyz_batch -e "select ..."
++--------------------------+-------+
+| tabla                    | filas |
++--------------------------+-------+
+| transacciones            |   392 |
+| intereses                |   375 |
+| estado_cuenta_movimiento |   604 |
+| estado_cuenta            |    20 |
+| omitidos                 |  1629 |
++--------------------------+-------+
++------------------+------------------+-----------+-----------+
+| job_name         | job_execution_id | status    | exit_code |
++------------------+------------------+-----------+-----------+
+| transaccionesJob |                1 | COMPLETED | COMPLETED |
+| interesesJob     |                2 | COMPLETED | COMPLETED |
+| estadoCuentaJob  |                3 | COMPLETED | COMPLETED |
++------------------+------------------+-----------+-----------+
+
+# reejecucion automatica: con batch.demo.falla-critica=true el primer chunk falla con un error que no es
+# de datos ni transitorio (sin skip ni retry), el step queda FAILED y ReejecucionRunner relanza la misma instancia
+$ docker-compose run --rm batch --spring.batch.job.name=transaccionesJob --batch.demo.falla-critica=true
+2026-10-10T22:14:41.585 INFO [main] Inicio job=transaccionesJob executionId=4
+Caused by: java.lang.IllegalStateException: falla critica simulada (batch.demo.falla-critica=true)
+2026-10-10T22:14:41.677 INFO [batch-1] Step: [transaccionesStep:partition-movimientos_financieros_diarios.csv-1] executed in 69ms
+2026-10-10T22:14:41.758 INFO [batch-2] Step: [transaccionesStep:partition-movimientos_financieros_diarios.csv-0] executed in 150ms
+2026-10-10T22:14:41.762 INFO [main] Step: [transaccionesMasterStep] executed in 170ms
+2026-10-10T22:14:41.777 INFO [main] Omitidos job=transaccionesJob total=364 detalle=/app/reportes/transacciones-4-omitidos.csv resumen=/app/reportes/transacciones-4-omitidos-resumen.csv
+2026-10-10T22:14:41.777 INFO [main]   omitidos lectura,campo_invalido_fecha -> 27
+2026-10-10T22:14:41.777 INFO [main]   omitidos proceso,monto_no_positivo -> 76
+2026-10-10T22:14:41.777 INFO [main]   omitidos proceso,tipo_no_permitido -> 165
+2026-10-10T22:14:41.777 INFO [main]   omitidos proceso,monto_ausente -> 96
+2026-10-10T22:14:41.797 INFO [main] Tasa de omisión job=transaccionesJob 364/605 = 0.602 (umbral 0.7)
+2026-10-10T22:14:41.797 WARN [main] job=transaccionesJob descartó 364 de 605 registros (60.2%): dentro del umbral, pero es una proporción alta del origen. Revisar el detalle de omitidos antes de dar la carga por buena.
+2026-10-10T22:14:41.797 INFO [main] Fin job=transaccionesJob status=FAILED read=573 write=204 descartadas=364 (filtradas=337 omitidas=32)
+2026-10-10T22:14:41.800 INFO [main] Job: [SimpleJob: [name=transaccionesJob]] completed with the following parameters: [{'run.id':'{value=2, type=class java.lang.Long, identifying=true}'}] and the following status: [FAILED] in 186ms
+2026-10-10T22:14:41.800 WARN [main] job=transaccionesJob executionId=4 FAILED en un step, reejecuto en 2000 ms (intento 2 de 3)
+2026-10-10T22:14:43.627 INFO [main] Inicio job=transaccionesJob executionId=5
+2026-10-10T22:14:43.691 INFO [batch-2] Step: [transaccionesStep:partition-movimientos_financieros_diarios.csv-1] executed in 49ms
+2026-10-10T22:14:43.694 INFO [main] Step: [transaccionesMasterStep] executed in 61ms
+2026-10-10T22:14:43.700 INFO [main] Omitidos job=transaccionesJob total=312 detalle=/app/reportes/transacciones-5-omitidos.csv resumen=/app/reportes/transacciones-5-omitidos-resumen.csv
+2026-10-10T22:14:43.701 INFO [main]   omitidos lectura,campo_invalido_fecha -> 22
+2026-10-10T22:14:43.701 INFO [main]   omitidos proceso,monto_no_positivo -> 78
+2026-10-10T22:14:43.701 INFO [main]   omitidos proceso,tipo_no_permitido -> 133
+2026-10-10T22:14:43.701 INFO [main]   omitidos proceso,monto_ausente -> 79
+2026-10-10T22:14:43.711 INFO [main] Tasa de omisión job=transaccionesJob 312/500 = 0.624 (umbral 0.7)
+2026-10-10T22:14:43.711 WARN [main] job=transaccionesJob descartó 312 de 500 registros (62.4%): dentro del umbral, pero es una proporción alta del origen. Revisar el detalle de omitidos antes de dar la carga por buena.
+2026-10-10T22:14:43.711 INFO [main] Fin job=transaccionesJob status=COMPLETED read=478 write=188 descartadas=312 (filtradas=290 omitidas=22)
+2026-10-10T22:14:43.713 INFO [main] job=transaccionesJob termino con status=COMPLETED exit=0
+exit=0
+
++-----------------+------------------+------------------+-----------+-----------+
+| job_instance_id | job_name         | job_execution_id | status    | exit_code |
++-----------------+------------------+------------------+-----------+-----------+
+|               1 | transaccionesJob |                1 | COMPLETED | COMPLETED |
+|               4 | transaccionesJob |                4 | FAILED    | FAILED    |
+|               4 | transaccionesJob |                5 | COMPLETED | COMPLETED |
++-----------------+------------------+------------------+-----------+-----------+
++------------------+-------------------------------------------------------------------+-----------+------------+-------------+
+| job_execution_id | step_name                                                         | status    | read_count | write_count |
++------------------+-------------------------------------------------------------------+-----------+------------+-------------+
+|                4 | transaccionesMasterStep                                           | FAILED    |        573 |         204 |
+|                4 | transaccionesStep:partition-movimientos_financieros_diarios.csv-0 | COMPLETED |        473 |         204 |
+|                4 | transaccionesStep:partition-movimientos_financieros_diarios.csv-1 | FAILED    |        100 |           0 |
+|                5 | transaccionesMasterStep                                           | COMPLETED |        478 |         188 |
+|                5 | transaccionesStep:partition-movimientos_financieros_diarios.csv-1 | COMPLETED |        478 |         188 |
++------------------+-------------------------------------------------------------------+-----------+------------+-------------+
