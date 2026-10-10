@@ -125,34 +125,42 @@ curl -sk -X POST -H "Authorization: Bearer $OPS" $G/api/notificaciones/listeners
 
 ## 5. resilience4j y fallback
 
+config (en `config-repo/application.yml`): retry de 3 intentos cada 100 ms, circuito con ventana de 10, minimo 4 llamadas, se abre con 50 % de fallas y queda abierto 15s. la salida de estos mismos comandos esta en `evidencias/resiliencia.txt`.
+
 ```bash
+# 1. todo sano, circuito CLOSED
+for i in 1 2 3; do curl -sk -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $WEB" $G/api/web/me/dashboard; done
+docker-compose exec bff-web wget -qO- http://localhost:8441/actuator/circuitbreakers
+
+# 2. apago ms-cuentas
 docker-compose stop ms-cuentas
+
+# 3. las primeras llamadas se demoran (3 intentos cada una), despues el circuito se abre y responde altiro con "degraded": true
 for i in 1 2 3 4 5; do curl -sk -w "  [%{http_code} %{time_total}s]\n" -H "Authorization: Bearer $WEB" $G/api/web/me/dashboard; done
-# las primeras se demoran (3 reintentos), despues el circuito se abre y responde altiro con "degraded": true
-docker-compose exec bff-web wget -qO- http://localhost:8441/actuator/circuitbreakers    # msCuentas OPEN
-curl -sk -H "Authorization: Bearer $MOB" $G/api/mobile/me/inicio      # 200 degraded
-curl -sk -H "Authorization: Bearer $ATM" $G/api/atm/cuentas/101/saldo # 503, el cajero no inventa un saldo
+docker-compose exec bff-web wget -qO- http://localhost:8441/actuator/retryevents/msCuentas   # RETRY 1, RETRY 2, ERROR 3
+docker-compose exec bff-web wget -qO- http://localhost:8441/actuator/circuitbreakers         # msCuentas OPEN
+curl -sk -w "  [%{http_code}]\n" -H "Authorization: Bearer $MOB" $G/api/mobile/me/inicio      # 200 degraded
+curl -sk -w "  [%{http_code}]\n" -H "Authorization: Bearer $ATM" $G/api/atm/cuentas/101/saldo # 503, el cajero no inventa un saldo
+
+# 4. ms-pagos tambien reintenta hacia ms-cuentas: la transferencia no se hace y no se cobra nada
+curl -sk -w "  [%{http_code}]\n" -H "Authorization: Bearer $WEB" -H "Idempotency-Key: caido-$(date +%s)" -H "Content-Type: application/json" \
+     -d '{"fromAccount":101,"toAccount":102,"amount":1000}' $G/api/web/transferencias
+docker-compose exec ms-pagos wget -qO- http://localhost:8082/actuator/retryevents/msCuentas
+docker-compose exec ms-pagos wget -qO- http://localhost:8082/actuator/circuitbreakers
+
+# 5. vuelvo a levantar ms-cuentas: a los 15s pasa solo a HALF_OPEN y con 2 llamadas buenas vuelve a CLOSED
 docker-compose start ms-cuentas
-# a los 15s pasa a HALF_OPEN y con 2 llamadas buenas vuelve a CLOSED
-```
+docker-compose exec bff-web wget -qO- http://localhost:8441/actuator/circuitbreakers         # HALF_OPEN
+for i in 1 2; do curl -sk -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $WEB" $G/api/web/me/dashboard; done
+docker-compose exec bff-web wget -qO- http://localhost:8441/actuator/circuitbreakers         # CLOSED
 
-para ver el retry en accion (los 3 intentos de cada llamada) mientras ms-cuentas esta abajo:
-
-```bash
-docker compose exec bff-web wget -qO- http://localhost:8441/actuator/retryevents/msCuentas
-docker compose exec ms-pagos wget -qO- http://localhost:8082/actuator/retryevents/msCuentas     # despues de intentar una transferencia
-docker compose exec ms-pagos wget -qO- http://localhost:8082/actuator/circuitbreakers
-```
-
-los endpoints `/actuator/circuitbreakers`, `/actuator/circuitbreakerevents`, `/actuator/retries` y `/actuator/retryevents` estan abiertos sin token (no muestran datos de clientes). como los bff no tienen puerto hacia afuera se consultan asi: `docker-compose exec bff-web wget -qO- http://localhost:8441/actuator/retryevents`.
-
-si se cae un bff entero, el que responde es el fallback del gateway:
-
-```bash
+# 6. si se cae un bff entero, responde el fallback del gateway
 docker-compose stop bff-atm
-curl -sk -H "Authorization: Bearer $ATM" $G/api/atm/cuentas/101/saldo   # 503 {"canal":"atm","degraded":true,...}
+curl -sk -w "  [%{http_code}]\n" -H "Authorization: Bearer $ATM" $G/api/atm/cuentas/101/saldo   # 503 {"canal":"atm","degraded":true,...}
 docker-compose start bff-atm
 ```
+
+los endpoints `/actuator/circuitbreakers`, `/actuator/circuitbreakerevents`, `/actuator/retries` y `/actuator/retryevents` estan abiertos sin token (no muestran datos de clientes). como los bff y ms-pagos no tienen puerto hacia afuera se consultan con `docker-compose exec ... wget`.
 
 ## 6. escalado y eureka
 
@@ -160,8 +168,10 @@ docker-compose start bff-atm
 docker-compose up -d --scale ms-cuentas=2
 # en http://localhost:8761 aparece MS-CUENTAS con 2 instancias, o:
 curl -s -H 'Accept: application/json' http://localhost:8761/eureka/apps/MS-CUENTAS | python3 -m json.tool | grep instanceId
+DESDE=$(date -u +%Y-%m-%dT%H:%M:%SZ)     # para contar solo las llamadas de abajo
 for i in $(seq 1 10); do curl -sk -H "Authorization: Bearer $ATM" $G/api/atm/cuentas/101/saldo; echo; done
-docker-compose logs --since 1m ms-cuentas | grep "atendido por"    # las llamadas se reparten entre las 2
+docker-compose logs --since $DESDE ms-cuentas | grep "atendido por"    # las llamadas se reparten entre las 2
+for c in $(docker-compose ps -q ms-cuentas); do echo "$(docker inspect -f {{.Name}} $c): $(docker logs --since $DESDE $c 2>&1 | grep -c "atendido por")"; done
 ```
 
 lo mismo sirve para `ms-pagos`, `ms-clientes`, los bff y `notificaciones` (ninguno tiene `container_name` ni puerto publicado).

@@ -148,11 +148,10 @@ en [evidencias/](evidencias/) (todas del 2026-10-10, con el compose arriba en co
 |---|---|
 | `00-mvn-package.txt` | `mvn package` en verde, 34 tests en 13 modulos |
 | `01-e2e.txt` | tokens por el gateway, los 3 bff, 401/403 por canal, retiro, deposito, transferencia, pago, saga que devuelve la plata, idempotencia, abrir/cerrar cuenta, perfil, notificaciones y el grupo de consumidores de kafka |
-| `02-resilience4j-fallback.txt` | ms-cuentas caido: reintentos, circuito OPEN, fallback degradado en web/movil, 503 en el cajero, HALF_OPEN y CLOSED al volver; fallback del gateway con bff-atm caido |
-| `03-escalado-eureka.txt` | `--scale ms-cuentas=2`, las 2 instancias en eureka y las llamadas repartidas 6/5 entre las 2 |
+| `03-escalado-eureka.txt` | `--scale ms-cuentas=2`, las 2 instancias en eureka y 10 consultas de saldo repartidas 5/5 entre las 2 |
 | `04-batch.txt` | los 3 jobs como contenedor one-shot, conteos en mysql y la reejecucion automatica (FAILED -> restart de la misma instancia -> COMPLETED) |
 | `05-docker-stats.txt` | memoria de todo arriba (unos 2,9 GB con 2 replicas de ms-cuentas) |
-| `resiliencia.txt` | resilience4j paso a paso: CLOSED, ms-cuentas apagado, 3 intentos en `/actuator/retryevents`, OPEN con fallback, HALF_OPEN y CLOSED |
+| `resiliencia.txt` | resilience4j paso a paso con los comandos de instrucciones.md seccion 5: CLOSED, ms-cuentas apagado, 3 intentos en `/actuator/retryevents` (bff-web y ms-pagos), OPEN con fallback degradado en web/movil y 503 en el cajero, HALF_OPEN y CLOSED al volver, y el fallback del gateway con bff-atm caido |
 | `batch-transacciones.txt`, `batch-intereses.txt`, `batch-estadoCuenta.txt` | las lineas del `BatchMetricsListener` de cada job (leidos, escritos, descartados, tasa de omision) |
 | `kafka-ec2.txt` | kafka corriendo en la ec2 (instancia, `docker compose ps` por ssh, topicos), el `KAFKA_BOOTSTRAP` de los servicios locales y un evento producido en local, leido en la ec2 y consumido por notificaciones (se agrega al desplegar kafka en la ec2) |
 

@@ -1,71 +1,51 @@
-# 2026-10-10 19:10:56 - escalado horizontal de ms-cuentas
-$ docker-compose up -d --scale ms-cuentas=2 ms-cuentas
- Container s9-ms-clientes-1 Running 
- Container config-server Running 
- Container eureka-server Running 
- Container mysql Running 
- Container auth-server Running 
+# 2026-10-10 20:35:38 - escalado horizontal de ms-cuentas
+
+$ docker-compose up -d --scale ms-cuentas=2
  Container s9-ms-cuentas-1 Running 
  Container s9-ms-cuentas-2 Creating 
  Container s9-ms-cuentas-2 Created 
- Container config-server Healthy 
- Container eureka-server Healthy 
- Container auth-server Healthy 
- Container mysql Healthy 
- Container mysql Healthy 
- Container s9-ms-clientes-1 Healthy 
- Container config-server Healthy 
- Container eureka-server Healthy 
- Container auth-server Healthy 
  Container s9-ms-cuentas-2 Starting 
  Container s9-ms-cuentas-2 Started 
 
 $ docker-compose ps ms-cuentas
 NAME              STATUS
 s9-ms-cuentas-1   Up 2 minutes (healthy)
-s9-ms-cuentas-2   Up 24 seconds (healthy)
+s9-ms-cuentas-2   Up 27 seconds (healthy)
 
-$ curl -s -H "Accept: application/json" http://localhost:8761/eureka/apps/MS-CUENTAS  (resumen)
-MS-CUENTAS instancias: 2
-  8d8ab522e930:ms-cuentas:8081 172.19.0.16 UP
-  331a2c160034:ms-cuentas:8081 172.19.0.9 UP
+$ curl -s -H "Accept: application/json" http://localhost:8761/eureka/apps/MS-CUENTAS | python3 -m json.tool | grep -E "instanceId|ipAddr|\"status\""
+                "instanceId": "feb6dc9631d4:ms-cuentas:8081",
+                "ipAddr": "172.19.0.16",
+                "status": "UP",
+                "instanceId": "21b9e009bae3:ms-cuentas:8081",
+                "ipAddr": "172.19.0.15",
+                "status": "UP",
 
-$ curl -s -H "Accept: application/json" http://localhost:8761/eureka/apps  (todas las aplicaciones registradas)
-  BFF-MOBILE 1
-  BFF-ATM 1
-  API-GATEWAY 1
-  NOTIFICACIONES 1
-  BFF-WEB 1
-  MS-CLIENTES 1
-  MS-PAGOS 1
-  MS-CUENTAS 2
+$ DESDE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+$ for i in $(seq 1 10); do curl -sk -H "Authorization: Bearer $ATM" $G/api/atm/cuentas/101/saldo; echo; done
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":999000.00}
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":999000.00}
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":999000.00}
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":999000.00}
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":999000.00}
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":999000.00}
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":999000.00}
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":999000.00}
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":999000.00}
+{"maskedNumber":"****0101","currency":"CLP","availableBalance":999000.00}
 
-$ for i in $(seq 1 10); do curl -sk -H "Authorization: Bearer $ATM" $G/api/atm/cuentas/101/saldo; done
-{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
-{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
-{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
-{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
-{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
-{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
-{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
-{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
-{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
-{"maskedNumber":"****0101","currency":"CLP","availableBalance":797010.00}
+# cada replica loguea su hostname al atender un saldo. solo las lineas desde $DESDE (las 10 llamadas de arriba):
+$ docker-compose logs --since $DESDE ms-cuentas | grep "atendido por" (recortado: solo servicio y mensaje)
+ms-cuentas-2  | saldo cuenta=101 atendido por instancia=feb6dc9631d4
+ms-cuentas-2  | saldo cuenta=101 atendido por instancia=feb6dc9631d4
+ms-cuentas-2  | saldo cuenta=101 atendido por instancia=feb6dc9631d4
+ms-cuentas-2  | saldo cuenta=101 atendido por instancia=feb6dc9631d4
+ms-cuentas-2  | saldo cuenta=101 atendido por instancia=feb6dc9631d4
+ms-cuentas-1  | saldo cuenta=101 atendido por instancia=21b9e009bae3
+ms-cuentas-1  | saldo cuenta=101 atendido por instancia=21b9e009bae3
+ms-cuentas-1  | saldo cuenta=101 atendido por instancia=21b9e009bae3
+ms-cuentas-1  | saldo cuenta=101 atendido por instancia=21b9e009bae3
+ms-cuentas-1  | saldo cuenta=101 atendido por instancia=21b9e009bae3
 
-# el loadbalancer de bff-atm reparte entre las 2 replicas (cada una loguea su hostname):
-$ docker-compose logs --since 1m ms-cuentas | grep "atendido por"   (recortado: solo servicio y mensaje)
-ms-cuentas-2  | saldo cuenta=101 atendido por instancia=8d8ab522e930
-ms-cuentas-2  | saldo cuenta=101 atendido por instancia=8d8ab522e930
-ms-cuentas-2  | saldo cuenta=101 atendido por instancia=8d8ab522e930
-ms-cuentas-2  | saldo cuenta=101 atendido por instancia=8d8ab522e930
-ms-cuentas-2  | saldo cuenta=101 atendido por instancia=8d8ab522e930
-ms-cuentas-1  | saldo cuenta=101 atendido por instancia=331a2c160034
-ms-cuentas-1  | saldo cuenta=101 atendido por instancia=331a2c160034
-ms-cuentas-1  | saldo cuenta=101 atendido por instancia=331a2c160034
-ms-cuentas-1  | saldo cuenta=101 atendido por instancia=331a2c160034
-ms-cuentas-1  | saldo cuenta=101 atendido por instancia=331a2c160034
-ms-cuentas-1  | saldo cuenta=101 atendido por instancia=331a2c160034
-
-$ docker-compose logs --since 1m ms-cuentas | grep "atendido por" | awk "{print \$1}" | sort | uniq -c
-   6 ms-cuentas-1
-   5 ms-cuentas-2
+$ for c in $(docker-compose ps -q ms-cuentas); do echo "$(docker inspect -f {{.Name}} $c): $(docker logs --since $DESDE $c 2>&1 | grep -c "atendido por")"; done
+/s9-ms-cuentas-1: 5
+/s9-ms-cuentas-2: 5
