@@ -8,7 +8,11 @@
 #   8443 api-gateway (https), 8761 eureka, 8888 config-server, 8090 kafka-ui
 #
 # ojo con la ram: lo probe en colima con 8gb y 4 cpu. cada java va con heap de 200m y serial gc,
-# y kafka quedo en 1 broker (en s8 eran 3 y con todo lo nuevo no cabia)
+# y kafka quedo en 1 broker (en s8 eran 3)
+#
+# kafka: el local (kafka + kafka-ui) esta en el profile kafka-local, que el .env deja activo con
+# COMPOSE_PROFILES=kafka-local. para usar el kafka de la ec2 (infra/ansible) se saca ese profile del .env
+# y se pone KAFKA_BOOTSTRAP=<ip publica>:9094
 
 # lo mismo para todos los servicios java
 x-java: &java
@@ -53,7 +57,7 @@ services:
     command: --innodb-buffer-pool-size=64M --performance-schema=OFF
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./docker/mysql/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+      - ./mysql/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
     healthcheck:
       test: mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent
       interval: 10s
@@ -65,6 +69,7 @@ services:
   kafka:
     image: apache/kafka:3.9.1
     container_name: kafka
+    profiles: [kafka-local]
     restart: unless-stopped
     mem_limit: 700m
     ports: ["19092:19092"]
@@ -95,6 +100,7 @@ services:
   kafka-ui:
     image: provectuslabs/kafka-ui:v0.7.2
     container_name: kafka-ui
+    profiles: [kafka-local]
     restart: unless-stopped
     mem_limit: 400m
     ports: ["8090:8080"]
@@ -192,8 +198,10 @@ services:
       PAGOS_CLIENT_SECRET: ${PAGOS_CLIENT_SECRET}
     depends_on:
       <<: *depende-base
+      # required: false -> si el profile kafka-local esta apagado (kafka en la ec2) no se espera a nadie
       kafka:
         condition: service_healthy
+        required: false
     healthcheck:
       test: wget -qO- http://localhost:8082/actuator/health | grep -q UP
       interval: 10s
@@ -270,8 +278,10 @@ services:
       <<: *java-env
     depends_on:
       <<: *depende-base
+      # required: false -> si el profile kafka-local esta apagado (kafka en la ec2) no se espera a nadie
       kafka:
         condition: service_healthy
+        required: false
     healthcheck:
       test: wget -qO- http://localhost:8450/actuator/health | grep -q UP
       interval: 10s
