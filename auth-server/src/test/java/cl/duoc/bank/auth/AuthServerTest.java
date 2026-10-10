@@ -12,7 +12,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
 
-@SpringBootTest(properties = {"bank.auth.demo-password=test", "bank.auth.ops-secret=ops-secret"})
+@SpringBootTest(properties = {"bank.auth.demo-password=test", "bank.auth.ops-secret=ops-secret", "bank.auth.pagos-secret=pagos-secret"})
 @AutoConfigureMockMvc
 class AuthServerTest {
     @Autowired MockMvc mvc;
@@ -36,5 +36,18 @@ class AuthServerTest {
         mvc.perform(post("/oauth2/token").with(httpBasic("ops-notificaciones", "otra"))
                         .param("grant_type", "client_credentials"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void msPagosSoloPuedePedirCuentasOperar() throws Exception {
+        mvc.perform(post("/oauth2/token").with(httpBasic("ms-pagos", "pagos-secret"))
+                        .param("grant_type", "client_credentials")
+                        .param("scope", "cuentas:operar"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope").value("cuentas:operar"));
+        mvc.perform(post("/oauth2/token").with(httpBasic("ms-pagos", "pagos-secret"))
+                        .param("grant_type", "client_credentials")
+                        .param("scope", "web:read"))
+                .andExpect(status().isBadRequest());
     }
 }

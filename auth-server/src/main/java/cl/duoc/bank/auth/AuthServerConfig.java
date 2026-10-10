@@ -73,11 +73,13 @@ public class AuthServerConfig {
 
     @Bean
     RegisteredClientRepository clients(@Value("${bank.auth.redirect-uri}") String redirectUri,
-                                       @Value("${bank.auth.ops-secret}") String opsSecret) {
-        // un cliente por canal, con authorization code + PKCE porque hay un usuario que se loguea
-        RegisteredClient web = clienteCanal("bank-web", redirectUri, "web:read");
+                                       @Value("${bank.auth.ops-secret}") String opsSecret,
+                                       @Value("${bank.auth.pagos-secret}") String pagosSecret) {
+        // un cliente por canal, con authorization code + PKCE porque hay un usuario que se loguea.
+        // cada canal tiene solo sus scopes: la web lee y escribe, el movil solo lee y el cajero saldo/retiro/deposito
+        RegisteredClient web = clienteCanal("bank-web", redirectUri, "web:read", "web:write");
         RegisteredClient mobile = clienteCanal("bank-mobile", redirectUri, "mobile:read");
-        RegisteredClient atm = clienteCanal("bank-atm", redirectUri, "atm:balance", "atm:withdraw");
+        RegisteredClient atm = clienteCanal("bank-atm", redirectUri, "atm:balance", "atm:withdraw", "atm:deposit");
 
         // client_credentials (sin usuario), para consultar el servicio de notificaciones
         RegisteredClient ops = RegisteredClient.withId(UUID.randomUUID().toString())
@@ -88,7 +90,16 @@ public class AuthServerConfig {
                 .scope("notificaciones:read")
                 .scope("notificaciones:admin") // para pausar/reanudar el consumidor kafka
                 .build();
-        return new InMemoryRegisteredClientRepository(web, mobile, atm, ops);
+
+        // ms-pagos llama a los endpoints /internal de ms-cuentas con su propio token (servicio a servicio)
+        RegisteredClient pagos = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId("ms-pagos")
+                .clientSecret("{noop}" + pagosSecret)
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                .scope("cuentas:operar")
+                .build();
+        return new InMemoryRegisteredClientRepository(web, mobile, atm, ops, pagos);
     }
 
     private static RegisteredClient clienteCanal(String clientId, String redirectUri, String... scopes) {
