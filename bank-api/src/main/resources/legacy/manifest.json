@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/KariVillagran/bank_legacy_data",
+  "commit": "ef9c7bb1c5a820b1a24220d482d1a85149cb4cbe",
+  "files": [
+    {
+      "file": "transacciones.csv",
+      "url": "https://raw.githubusercontent.com/KariVillagran/bank_legacy_data/ef9c7bb1c5a820b1a24220d482d1a85149cb4cbe/data/semana_3/transacciones.csv",
+      "sha256": "9a209c71d5556380481731f0fe9ac148a586a7c91698b377481b62e96341e836",
+      "bytes": 26882,
+      "matches_previous_local": true
+    },
+    {
+      "file": "cuentas_anuales.csv",
+      "url": "https://raw.githubusercontent.com/KariVillagran/bank_legacy_data/ef9c7bb1c5a820b1a24220d482d1a85149cb4cbe/data/semana_3/cuentas_anuales.csv",
+      "sha256": "0690d81fe446affe39857a448ff5590c4f6e6f998150c08934db3aa41683e328",
+      "bytes": 40056,
+      "matches_previous_local": true
+    },
+    {
+      "file": "intereses.csv",
+      "url": "https://raw.githubusercontent.com/KariVillagran/bank_legacy_data/ef9c7bb1c5a820b1a24220d482d1a85149cb4cbe/data/semana_3/intereses.csv",
+      "sha256": "69cc39f468db47e4d752657db95ee9caf00ebcaf31581e45e104c4dc4a5e3120",
+      "bytes": 29854,
+      "matches_previous_local": true
+    }
+  ]
+}
