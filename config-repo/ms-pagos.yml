@@ -1,0 +1,44 @@
+# ms-pagos: retiros, depositos, transferencias y pagos de servicios. orquesta la saga y publica en kafka
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/pagos?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: pagos
+    password: ${DB_PASSWORD:banco}
+  sql:
+    init:
+      mode: always
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:19092}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          audiences: bank-web,bank-mobile,bank-atm
+      # el token con el que ms-pagos llama a ms-cuentas (/internal)
+      client:
+        registration:
+          ms-pagos:
+            client-id: ms-pagos
+            client-secret: ${PAGOS_CLIENT_SECRET:cambiar}
+            authorization-grant-type: client_credentials
+            scope: cuentas:operar
+        provider:
+          ms-pagos:
+            token-uri: ${AUTH_URL:http://localhost:9000}/oauth2/token
+
+banco:
+  kafka:
+    # 1 broker en docker, en aws (msk) se cambia a 3 aca sin recompilar
+    replicas: ${KAFKA_REPLICAS:1}
+
+pagos:
+  alertas:
+    # un movimiento desde $150.000 genera alerta de seguridad, y 3 rechazos seguidos en 10 min tambien
+    monto-alto: 150000
+    intentos-fallidos: 3
+  # cada cuanto revisa sagas colgadas
+  reconciliacion-ms: 15000
+
+eventos:
+  # cada cuanto manda lo que quedo en el outbox
+  reintento-ms: 5000

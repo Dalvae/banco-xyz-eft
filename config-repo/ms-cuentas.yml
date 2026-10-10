@@ -1,0 +1,15 @@
+# ms-cuentas: dueno de las cuentas y el saldo. su propia base (schema cuentas en mysql)
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/cuentas?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: cuentas
+    password: ${DB_PASSWORD:banco}
+  sql:
+    init:
+      mode: always
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # los 3 canales (los bff reenvian el token del usuario) y ms-pagos con su client_credentials
+          audiences: bank-web,bank-mobile,bank-atm,ms-pagos

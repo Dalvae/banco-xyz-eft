@@ -1,0 +1,69 @@
+# config comun para todos los que le piden config al config-server (se mezcla con <servicio>.yml)
+# los valores con ${...} salen de variables de entorno del docker-compose, el default es para correr local
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    # que se enteren rapido de las replicas nuevas o caidas (el default es 30s)
+    registry-fetch-interval-seconds: 5
+  instance:
+    # en docker el hostname es el id del contenedor, con la ip se ve mas claro en eureka
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 15
+
+spring:
+  mvc:
+    problemdetails:
+      enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # el token lo firma el auth-server, todos validan firma (jwks) e issuer. la audiencia va en cada servicio
+          issuer-uri: ${AUTH_ISSUER:http://auth-server:9000}
+          jwk-set-uri: ${AUTH_URL:http://localhost:9000}/oauth2/jwks
+
+# resilience4j: la misma config para todas las instancias (msCuentas, msPagos, msClientes)
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        # si falla la mitad de las ultimas 10 llamadas (minimo 4) se abre por 15s
+        sliding-window-size: 10
+        minimum-number-of-calls: 4
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        # los 4xx son respuesta de negocio (sin fondos, cuenta ajena), no cuentan como falla
+        ignore-exceptions: org.springframework.web.server.ResponseStatusException
+    # circuit breaker afuera y retry adentro, si no el fallback se come el error antes de reintentar (esto me costo cachar en s8)
+    circuit-breaker-aspect-order: 1
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 500ms
+        retry-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - org.springframework.web.client.HttpServerErrorException
+    retry-aspect-order: 2
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,circuitbreakers,circuitbreakerevents
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+
+# traceId y spanId en cada linea de log, asi se sigue una operacion por todos los servicios
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-}]"

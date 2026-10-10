@@ -1,0 +1,7 @@
+# bff-web: solo acepta tokens emitidos para el cliente bank-web (si llega el token de otro canal da 401)
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          audiences: bank-web

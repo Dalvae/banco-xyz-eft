@@ -1,0 +1,15 @@
+# ms-clientes: datos personales y perfil del cliente. su propia base (schema clientes)
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/clientes?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: clientes
+    password: ${DB_PASSWORD:banco}
+  sql:
+    init:
+      mode: always
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # web (perfil completo y editar) y movil. ms-cuentas reenvia el token del usuario al abrir cuenta
+          audiences: bank-web,bank-mobile

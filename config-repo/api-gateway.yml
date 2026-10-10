@@ -1,0 +1,69 @@
+# api-gateway: https en 8443 y rutas hacia los bff por eureka (lb:// usa spring cloud loadbalancer,
+# si hay 2 replicas de un bff reparte round robin)
+spring:
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: bff-web
+              uri: lb://bff-web
+              predicates:
+                - Path=/api/web/**
+              filters:
+                - name: CircuitBreaker
+                  args:
+                    name: bffWeb
+                    fallbackUri: forward:/fallback/web
+            - id: bff-mobile
+              uri: lb://bff-mobile
+              predicates:
+                - Path=/api/mobile/**
+              filters:
+                - name: CircuitBreaker
+                  args:
+                    name: bffMobile
+                    fallbackUri: forward:/fallback/mobile
+            - id: bff-atm
+              uri: lb://bff-atm
+              predicates:
+                - Path=/api/atm/**
+              filters:
+                - name: CircuitBreaker
+                  args:
+                    name: bffAtm
+                    fallbackUri: forward:/fallback/atm
+            - id: notificaciones
+              uri: lb://notificaciones
+              predicates:
+                - Path=/api/notificaciones/**
+            # el login y los tokens tambien pasan por aca para que vayan por https.
+            # el auth-server arma los redirect con los X-Forwarded-* que agrega el gateway
+            - id: auth-server
+              uri: ${AUTH_URL:http://localhost:9000}
+              predicates:
+                - Path=/oauth2/**,/login,/.well-known/**,/userinfo
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 10
+        minimum-number-of-calls: 4
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+  timelimiter:
+    configs:
+      default:
+        # los bff reintentan hasta 3 veces adentro, por eso le doy harto margen
+        timeout-duration: 10s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway,circuitbreakers
+  endpoint:
+    # para ver las rutas en /actuator/gateway/routes (solo lectura)
+    gateway:
+      access: read-only

@@ -1,0 +1,17 @@
+# notificaciones: consume banco.transacciones y banco.alertas-seguridad
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/notificaciones?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: notificaciones
+    password: ${DB_PASSWORD:banco}
+  sql:
+    init:
+      mode: always
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:19092}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # solo el cliente de operaciones (client_credentials)
+          audiences: ops-notificaciones
