@@ -16,35 +16,34 @@ como se ejecuta y prueba cada cosa paso a paso esta en [instrucciones.md](instru
 
 ## arquitectura
 
+```mermaid
+flowchart TB
+    canales["web / movil / cajero"] -->|https| gw["api-gateway :8443"]
+    gw -->|/oauth2, /login| auth["auth-server"]
+    subgraph bffs["bff por canal"]
+        web["bff-web"]
+        mob["bff-mobile"]
+        atm["bff-atm"]
+    end
+    gw -->|lb://| bffs
+    subgraph ms["microservicios"]
+        cue["ms-cuentas x2"]
+        pag["ms-pagos"]
+        cli["ms-clientes"]
+    end
+    bffs -->|lb:// + resilience4j| ms
+    pag -->|eventos| kafka[("kafka")]
+    kafka --> notif["notificaciones"]
+    ms --> mysql[("mysql")]
+    notif --> mysql
+    batch["batch: 3 jobs"] --> mysql
+    subgraph infra["spring cloud"]
+        config["config-server :8888"]
+        eureka["eureka-server :8761"]
+    end
 ```
-                                  +-------------------+     +---------------+
-                                  |   config-server   |     | eureka-server |
-                                  |  :8888 (native,   |     |    :8761      |
-                                  |   config-repo/)   |     +---------------+
-                                  +-------------------+       ^ todos se registran
-                                     ^ todos piden su config   | y se buscan por nombre
-                                                               |
- web / movil / cajero                                          |
-        |  https                                               |
-        v                                                      |
- +--------------+   lb://bff-web     +-----------+             |
- | api-gateway  | -----------------> |  bff-web  | --+         |
- |  :8443 https | lb://bff-mobile    +-----------+   |  lb://  |
- | (circuit     | -----------------> | bff-mobile| --+-------> ms-cuentas (x2) ---> mysql/cuentas
- |  breaker +   | lb://bff-atm       +-----------+   |          ^   |
- |  fallback)   | -----------------> |  bff-atm  | --+          |   +--> ms-clientes ---> mysql/clientes
- +--------------+                    +-----------+   |          |
-        |                                            +-------> ms-pagos ---> mysql/pagos
-        | /oauth2, /login                                         |  (saga + outbox)
-        v                                                         v
- +-------------+                                     kafka: banco.transacciones
- | auth-server |  todos validan el jwt con /oauth2/jwks    banco.alertas-seguridad
- |   :9000     |                                                  |
- +-------------+                                                  v
-                                                           notificaciones ---> mysql/notificaciones
 
- batch (one-shot): csv de fin_legacy_data ---> spring batch (3 jobs) ---> mysql/banco_xyz_batch
-```
+todos los servicios piden su config al config-server y se registran en eureka (en el dibujo puse solo algunas flechas punteadas para que no quede ilegible). todos validan el jwt del auth-server con `/oauth2/jwks`. kafka corre local con el profile `kafka-local` o en una ec2 de aws (ver [despliegue.md](despliegue.md)). los demas diagramas (secuencia de una transferencia, oauth2 por canal, batch, circuit breaker) estan en [docs/arquitectura.md](docs/arquitectura.md).
 
 el flujo de un retiro en el cajero: `curl -k https://localhost:8443/api/atm/cuentas/101/retiros` -> el gateway lo manda a una instancia de bff-atm (por eureka) -> bff-atm valida el token (audiencia `bank-atm`, scope `atm:withdraw`) y llama a `ms-pagos` -> ms-pagos guarda la operacion, le pide el debito a `ms-cuentas` con su propio token client_credentials y deja el evento en el outbox -> el outbox lo publica en `banco.transacciones` (y en `banco.alertas-seguridad` si es de $150.000 o mas) -> notificaciones lo consume y lo guarda.
 
@@ -159,18 +158,18 @@ en [evidencias/](evidencias/) (todas del 2026-10-10, con el compose arriba en co
 
 capturas en [evidencias/capturas/](evidencias/capturas/):
 
-![eureka con 2 instancias de ms-cuentas](evidencias/capturas/01-eureka-ms-cuentas-2-instancias.png)
+![eureka con 2 instancias de ms-cuentas](evidencias/capturas/01-eureka-ms-cuentas-2-instancias.webp)
 
 | | |
 |---|---|
-| ![broker](evidencias/capturas/02-kafka-ui-broker.png) | ![topicos](evidencias/capturas/03-kafka-ui-topicos.png) |
-| ![mensajes transacciones](evidencias/capturas/04-kafka-ui-mensajes-transacciones.png) | ![mensajes alertas](evidencias/capturas/05-kafka-ui-mensajes-alertas.png) |
-| ![consumidor](evidencias/capturas/06-kafka-ui-consumidor.png) | ![rutas del gateway](evidencias/capturas/09-gateway-rutas-https.png) |
-| ![config ms-pagos](evidencias/capturas/07-config-server-ms-pagos.png) | ![config api-gateway](evidencias/capturas/08-config-server-api-gateway.png) |
+| ![broker](evidencias/capturas/02-kafka-ui-broker.webp) | ![topicos](evidencias/capturas/03-kafka-ui-topicos.webp) |
+| ![mensajes transacciones](evidencias/capturas/04-kafka-ui-mensajes-transacciones.webp) | ![mensajes alertas](evidencias/capturas/05-kafka-ui-mensajes-alertas.webp) |
+| ![consumidor](evidencias/capturas/06-kafka-ui-consumidor.webp) | ![rutas del gateway](evidencias/capturas/09-gateway-rutas-https.webp) |
+| ![config ms-pagos](evidencias/capturas/07-config-server-ms-pagos.webp) | ![config api-gateway](evidencias/capturas/08-config-server-api-gateway.webp) |
 
-![fallback](evidencias/capturas/10-resilience4j-fallback.png)
+![fallback](evidencias/capturas/10-resilience4j-fallback.webp)
 
-![circuito abierto](evidencias/capturas/11-circuitbreakers-open.png)
+![circuito abierto](evidencias/capturas/11-circuitbreakers-open.webp)
 
 ## cosas que faltaron o simplifique
 

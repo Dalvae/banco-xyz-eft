@@ -2,14 +2,20 @@
 
 el sistema completo corre local con docker compose. en aws (learner lab) se despliega **solo kafka**, en una ec2 que arma un playbook de ansible, y los microservicios locales se conectan a ese broker remoto. asi lo pidio el profe, por eso no hay alb ni balanceador de aws: el balanceo y enrutamiento lo hacen spring cloud gateway + loadbalancer + eureka, igual que en local.
 
-```
- mi maquina (docker compose, sin el profile kafka-local)             aws learner lab (us-east-1)
- +---------------------------------------------------+             +-------------------------------+
- | api-gateway, bff-*, ms-*, eureka, config, auth,   |    9094     | ec2 t3.medium, amazon linux   |
- | notificaciones, mysql, batch                      | ----------> | docker compose:               |
- |   ms-pagos (productor), notificaciones (consumidor)|  plaintext  |   kafka (1 broker kraft)      |
- |   KAFKA_BOOTSTRAP=<ip publica>:9094               |             |   kafka-ui :8090              |
- +---------------------------------------------------+             +-------------------------------+
+```mermaid
+flowchart LR
+    subgraph mac["mi maquina: docker compose (sin el profile kafka-local)"]
+        pag["ms-pagos (productor)"]
+        notif["notificaciones (consumidor)"]
+        resto["api-gateway, bff-*, ms-cuentas, ms-clientes,<br/>eureka, config, auth, mysql, batch"]
+    end
+    subgraph aws["aws learner lab us-east-1: ec2 t3.medium"]
+        kafka[("kafka 1 broker kraft :9094")]
+        ui["kafka-ui :8090"]
+    end
+    pag -->|KAFKA_BOOTSTRAP=ip publica:9094| kafka
+    kafka --> notif
+    ui --- kafka
 ```
 
 ## 1. requisitos

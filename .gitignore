@@ -8,3 +8,8 @@
 .DS_Store
 dist/
 .omc/
+
+# el informe se entrega en pdf, el docx es solo la fuente
+informe/*.docx
+# el video va directo a ava, pesa mucho para git
+*.mp4
