@@ -1,0 +1,76 @@
+
+== 1. todo sano, circuito CLOSED ==
+{"profile":{"id":"demo","name":"Cliente Demo","email":"demo@bancoxyz.cl","phone":"+56933333333","segment":"PERSONAS"},"accounts":[{"id":101,"displayName":"Cuenta corrient
+   bff-web   msCuentas  CLOSED     fallas=0 rechazadas=0
+   bff-web   msPagos    CLOSED     fallas=0 rechazadas=0
+   ms-pagos  msCuentas  CLOSED     fallas=0 rechazadas=0
+
+== 2. apago ms-cuentas ==
+ Container s9-ms-cuentas-1 Stopping 
+ Container s9-ms-cuentas-2 Stopping 
+ Container s9-ms-cuentas-2 Stopped 
+ Container s9-ms-cuentas-1 Stopped 
+
+== 3. retry: una llamada al dashboard y una transferencia, cada una se intenta 3 veces ==
+{"profile":null,"accounts":[],"degraded":true,"notice":"No pudimos conectar con el banco, intenta en unos segundos"}  [200 en 1.715593s]
+{"type":"about:blank","title":"Service Unavailable","status":503,"detail":"Servicio no disponible por ahora, no se hizo ningun cambio","instance":"/api/web/transferencias"}  [503]
+-- /actuator/retryevents de bff-web (ultimos 3):
+   22:30:26.246 msCuentas RETRY intento 1 - org.springframework.web.client.ResourceAccessException: I/O error on G
+   22:30:26.851 msCuentas RETRY intento 2 - org.springframework.web.client.ResourceAccessException: I/O error on G
+   22:30:27.459 msCuentas ERROR intento 3 - org.springframework.web.client.ResourceAccessException: I/O error on G
+-- /actuator/retryevents de ms-pagos (ultimos 3):
+   22:30:29.741 msCuentas RETRY intento 1 - org.springframework.web.client.ResourceAccessException: I/O error on P
+   22:30:30.346 msCuentas RETRY intento 2 - org.springframework.web.client.ResourceAccessException: I/O error on P
+   22:30:30.951 msCuentas ERROR intento 3 - org.springframework.web.client.ResourceAccessException: I/O error on P
+
+== 4. sigo llamando hasta que el circuito se abre (OPEN) y responde el fallback ==
+{"profile":null,"accounts":[],"degraded":true,"notice":"No pudimos conectar con el banco, intenta en unos segundos"}  [200 en 1.697871s]
+{"profile":null,"accounts":[],"degraded":true,"notice":"No pudimos conectar con el banco, intenta en unos segundos"}  [200 en 1.702411s]
+-- con el circuito abierto ya ni intenta, el fallback responde al tiro:
+{"profile":null,"accounts":[],"degraded":true,"notice":"No pudimos conectar con el banco, intenta en unos segundos"}  [200 en 0.018290s]
+-- el cajero no inventa un saldo, responde 503:
+{"type":"about:blank","title":"Service Unavailable","status":503,"detail":"Cajero sin conexion con el banco, intenta mas tarde","instance":"/api/atm/cuentas/101/saldo"}  [503]
+   bff-web   msCuentas  OPEN       fallas=3 rechazadas=1
+   bff-web   msPagos    CLOSED     fallas=1 rechazadas=0
+   bff-atm   msCuentas  CLOSED     fallas=1 rechazadas=0
+   ms-pagos  msCuentas  OPEN       fallas=2 rechazadas=1
+-- /actuator/circuitbreakers de bff-web completo:
+{
+    "circuitBreakers": {
+        "msCuentas": {
+            "failureRate": "75.0%",
+            "slowCallRate": "0.0%",
+            "failureRateThreshold": "50.0%",
+            "slowCallRateThreshold": "100.0%",
+            "bufferedCalls": 4,
+            "failedCalls": 3,
+            "slowCalls": 0,
+            "slowFailedCalls": 0,
+            "notPermittedCalls": 1,
+            "state": "OPEN"
+        },
+        "msPagos": {
+            "failureRate": "-1.0%",
+            "slowCallRate": "-1.0%",
+            "failureRateThreshold": "50.0%",
+            "slowCallRateThreshold": "100.0%",
+            "bufferedCalls": 2,
+            "failedCalls": 1,
+            "slowCalls": 0,
+            "slowFailedCalls": 0,
+            "notPermittedCalls": 0,
+            "state": "CLOSED"
+        }
+    }
+}
+
+== 5. vuelvo a levantar ms-cuentas, espero HALF_OPEN y llamo hasta que se cierra ==
+ Container s9-ms-cuentas-2 Started 
+ Container s9-ms-cuentas-1 Started 
+ms-cuentas healthy
+   bff-web   msCuentas  HALF_OPEN  fallas=0 rechazadas=0
+   bff-web   msPagos    CLOSED     fallas=1 rechazadas=0
+{"profile":{"id":"demo","name":"Cliente Demo","email":"demo@bancoxyz.cl","phone":"+56933333333","segment":"PERSONAS"},"accounts":[{"id":101,"displayName":"Cuenta corrient
+{"profile":{"id":"demo","name":"Cliente Demo","email":"demo@bancoxyz.cl","phone":"+56933333333","segment":"PERSONAS"},"accounts":[{"id":101,"displayName":"Cuenta corrient
+   bff-web   msCuentas  CLOSED     fallas=0 rechazadas=0
+   bff-web   msPagos    CLOSED     fallas=1 rechazadas=0

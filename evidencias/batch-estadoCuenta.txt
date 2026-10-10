@@ -1,0 +1,17 @@
+# 2026-10-10 19:31:48 - estadoCuentaJob con batch/data/semana_3 (fin_legacy_data)
+$ docker-compose run --rm batch --spring.batch.job.name=estadoCuentaJob
+2026-10-10T22:31:50.399Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Inicio job=estadoCuentaJob executionId=9
+2026-10-10T22:31:50.567Z  INFO 1 --- [batch] [        batch-1] o.s.batch.core.step.AbstractStep         : Step: [estadoCuentaStep:partition-estados_financieros_anuales.csv-1] executed in 143ms
+2026-10-10T22:31:50.573Z  INFO 1 --- [batch] [        batch-2] o.s.batch.core.step.AbstractStep         : Step: [estadoCuentaStep:partition-estados_financieros_anuales.csv-0] executed in 148ms
+2026-10-10T22:31:50.575Z  INFO 1 --- [batch] [           main] o.s.batch.core.step.AbstractStep         : Step: [estadoCuentaMasterStep] executed in 166ms
+2026-10-10T22:31:50.592Z  INFO 1 --- [batch] [           main] o.s.batch.core.step.AbstractStep         : Step: [estadoCuentaAggregationStep] executed in 6ms
+2026-10-10T22:31:50.619Z  INFO 1 --- [batch] [           main] o.s.batch.core.step.AbstractStep         : Step: [estadoCuentaAuditReportStep] executed in 21ms
+2026-10-10T22:31:50.628Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Omitidos job=estadoCuentaJob total=396 detalle=/app/reportes/estadoCuenta-9-omitidos.csv resumen=/app/reportes/estadoCuenta-9-omitidos-resumen.csv
+2026-10-10T22:31:50.628Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  :   omitidos proceso,monto_no_positivo -> 348
+2026-10-10T22:31:50.628Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  :   omitidos proceso,monto_ausente -> 48
+2026-10-10T22:31:50.637Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Omitidos persistidos en la tabla omitidos: 396 filas (job_execution_id=9)
+2026-10-10T22:31:50.638Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Tasa de omisión job=estadoCuentaJob 396/1000 = 0.396 (umbral 0.45)
+2026-10-10T22:31:50.638Z  WARN 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : job=estadoCuentaJob descartó 396 de 1000 registros (39.6%): dentro del umbral, pero es una proporción alta del origen. Revisar el detalle de omitidos antes de dar la carga por buena.
+2026-10-10T22:31:50.638Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Fin job=estadoCuentaJob status=COMPLETED read=1000 write=604 descartadas=396 (filtradas=396 omitidas=0)
+2026-10-10T22:31:50.642Z  INFO 1 --- [batch] [           main] c.b.xyz.batch.config.ReejecucionRunner   : job=estadoCuentaJob termino con status=COMPLETED exit=0
+exit=0

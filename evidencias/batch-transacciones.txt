@@ -1,0 +1,18 @@
+# 2026-10-10 19:31:31 - transaccionesJob con batch/data/semana_3 (fin_legacy_data)
+$ docker-compose run --rm batch --spring.batch.job.name=transaccionesJob
+2026-10-10T22:31:46.092Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Inicio job=transaccionesJob executionId=7
+2026-10-10T22:31:46.260Z  INFO 1 --- [batch] [        batch-1] o.s.batch.core.step.AbstractStep         : Step: [transaccionesStep:partition-movimientos_financieros_diarios.csv-1] executed in 140ms
+2026-10-10T22:31:46.260Z  INFO 1 --- [batch] [        batch-2] o.s.batch.core.step.AbstractStep         : Step: [transaccionesStep:partition-movimientos_financieros_diarios.csv-0] executed in 139ms
+2026-10-10T22:31:46.266Z  INFO 1 --- [batch] [           main] o.s.batch.core.step.AbstractStep         : Step: [transaccionesMasterStep] executed in 166ms
+2026-10-10T22:31:46.282Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Omitidos job=transaccionesJob total=608 detalle=/app/reportes/transacciones-7-omitidos.csv resumen=/app/reportes/transacciones-7-omitidos-resumen.csv
+2026-10-10T22:31:46.282Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  :   omitidos lectura,campo_invalido_fecha -> 49
+2026-10-10T22:31:46.282Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  :   omitidos proceso,monto_no_positivo -> 141
+2026-10-10T22:31:46.282Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  :   omitidos proceso,tipo_no_permitido -> 256
+2026-10-10T22:31:46.282Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  :   omitidos proceso,monto_ausente -> 162
+2026-10-10T22:31:46.307Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Omitidos persistidos en la tabla omitidos: 608 filas (job_execution_id=7)
+2026-10-10T22:31:46.311Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Resumen de transacciones generado en /app/reportes/transacciones-7-resumen.csv
+2026-10-10T22:31:46.312Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Tasa de omisión job=transaccionesJob 608/1000 = 0.608 (umbral 0.7)
+2026-10-10T22:31:46.312Z  WARN 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : job=transaccionesJob descartó 608 de 1000 registros (60.8%): dentro del umbral, pero es una proporción alta del origen. Revisar el detalle de omitidos antes de dar la carga por buena.
+2026-10-10T22:31:46.312Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Fin job=transaccionesJob status=COMPLETED read=951 write=392 descartadas=608 (filtradas=559 omitidas=49)
+2026-10-10T22:31:46.315Z  INFO 1 --- [batch] [           main] c.b.xyz.batch.config.ReejecucionRunner   : job=transaccionesJob termino con status=COMPLETED exit=0
+exit=0

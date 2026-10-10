@@ -1,0 +1,16 @@
+# 2026-10-10 19:31:46 - interesesJob con batch/data/semana_3 (fin_legacy_data)
+$ docker-compose run --rm batch --spring.batch.job.name=interesesJob
+2026-10-10T22:31:48.263Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Inicio job=interesesJob executionId=8
+2026-10-10T22:31:48.414Z  INFO 1 --- [batch] [        batch-1] o.s.batch.core.step.AbstractStep         : Step: [interesesStep:partition-intereses_trimestrales.csv-0] executed in 132ms
+2026-10-10T22:31:48.437Z  INFO 1 --- [batch] [        batch-2] o.s.batch.core.step.AbstractStep         : Step: [interesesStep:partition-intereses_trimestrales.csv-1] executed in 155ms
+2026-10-10T22:31:48.440Z  INFO 1 --- [batch] [           main] o.s.batch.core.step.AbstractStep         : Step: [interesesMasterStep] executed in 171ms
+2026-10-10T22:31:48.452Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Omitidos job=interesesJob total=625 detalle=/app/reportes/intereses-8-omitidos.csv resumen=/app/reportes/intereses-8-omitidos-resumen.csv
+2026-10-10T22:31:48.452Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  :   omitidos proceso,fuera_de_alcance -> 166
+2026-10-10T22:31:48.452Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  :   omitidos proceso,tipo_no_permitido -> 255
+2026-10-10T22:31:48.453Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  :   omitidos proceso,saldo_ausente -> 204
+2026-10-10T22:31:48.468Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Omitidos persistidos en la tabla omitidos: 625 filas (job_execution_id=8)
+2026-10-10T22:31:48.470Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Tasa de omisión job=interesesJob 625/1000 = 0.625 (umbral 0.85)
+2026-10-10T22:31:48.470Z  WARN 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : job=interesesJob descartó 625 de 1000 registros (62.5%): dentro del umbral, pero es una proporción alta del origen. Revisar el detalle de omitidos antes de dar la carga por buena.
+2026-10-10T22:31:48.470Z  INFO 1 --- [batch] [           main] c.b.x.batch.config.BatchMetricsListener  : Fin job=interesesJob status=COMPLETED read=1000 write=375 descartadas=625 (filtradas=625 omitidas=0)
+2026-10-10T22:31:48.472Z  INFO 1 --- [batch] [           main] c.b.xyz.batch.config.ReejecucionRunner   : job=interesesJob termino con status=COMPLETED exit=0
+exit=0
