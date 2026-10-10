@@ -19,7 +19,7 @@ docker-compose ps             # esperar que todos digan (healthy), menos kafka-u
 ```
 
 - el `build` va con `--parallel 1` a proposito: la etapa de maven es igual en todos los Dockerfile, asi la primera imagen baja las dependencias y compila, y las otras 11 usan el cache. si se construyen en paralelo se compila 12 veces a la vez y no alcanza la ram. la primera vez se demora (a mi me tomo ~20 min por la descarga de dependencias dentro de colima), despues ~1 min.
-- los servicios parten en orden por los `depends_on` con healthcheck: mysql y kafka -> config-server y eureka -> auth-server -> ms-clientes -> ms-cuentas, ms-pagos, bff, notificaciones -> api-gateway.
+- el orden lo dan los `depends_on` con healthcheck: mysql, kafka, config-server, eureka-server y auth-server parten al tiro (no dependen de nadie). ms-clientes, ms-pagos, los 3 bff y notificaciones esperan a que esten healthy config-server, eureka, auth-server y mysql (ms-pagos y notificaciones tambien a kafka, si esta el profile kafka-local). ms-cuentas espera ademas a ms-clientes. el api-gateway solo espera a config-server y eureka: a los bff los encuentra en eureka cuando se registran.
 - para apagar: `docker-compose down` (con `-v` borra tambien las bases y kafka).
 - kafka y kafka-ui estan en el profile `kafka-local`, que el `.env.example` deja prendido (`COMPOSE_PROFILES=kafka-local`). para usar el kafka de la ec2 ver la seccion 11.
 
@@ -269,15 +269,16 @@ docker compose logs notificaciones | grep -m1 "bootstrap.servers"
 # 4. una transferencia por el gateway
 WEB=$(scripts/token.sh web)
 curl -sk -H "Authorization: Bearer $WEB" -H "Idempotency-Key: ec2-$(date +%s)" -H 'Content-Type: application/json' \
-     -d '{"fromAccount":101,"toAccount":102,"amount":4321}' https://localhost:8443/api/web/transferencias
+     -d '{"fromAccount":101,"toAccount":102,"amount":4321}' https://localhost:8443/api/web/transferencias | tee /tmp/transferencia.json
+OP=$(sed -n 's/.*"operationId":"\([^"]*\)".*/\1/p' /tmp/transferencia.json); echo $OP
 
-# 5. ese evento leido dentro de la ec2
-ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
-  --topic banco.transacciones --from-beginning --max-messages 50 --timeout-ms 10000 --property print.key=true'
+# 5. ese evento leido dentro de la ec2 (lee todo el topico y filtro por el operationId de la transferencia)
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> "docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic banco.transacciones --from-beginning --timeout-ms 10000 --property print.key=true 2>/dev/null" | grep "$OP"
 
 # 6. notificaciones (local) lo consumio desde la ec2, y el grupo quedo con lag 0
 OPS=$(scripts/token.sh ops)
-curl -sk -H "Authorization: Bearer $OPS" https://localhost:8443/api/notificaciones
+curl -sk -H "Authorization: Bearer $OPS" https://localhost:8443/api/notificaciones | grep -o "{[^}]*${OP}[^}]*}"
 ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group notificaciones'
 ```
 

@@ -111,15 +111,16 @@ docker compose logs notificaciones | grep -m1 "bootstrap.servers"
 # 4. una transferencia por el gateway
 WEB=$(scripts/token.sh web)
 curl -sk -H "Authorization: Bearer $WEB" -H "Idempotency-Key: ec2-$(date +%s)" -H 'Content-Type: application/json' \
-     -d '{"fromAccount":101,"toAccount":102,"amount":4321}' https://localhost:8443/api/web/transferencias
+     -d '{"fromAccount":101,"toAccount":102,"amount":4321}' https://localhost:8443/api/web/transferencias | tee /tmp/transferencia.json
+OP=$(sed -n 's/.*"operationId":"\([^"]*\)".*/\1/p' /tmp/transferencia.json); echo $OP
 
-# 5. ese evento leido dentro de la ec2
-ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
-  --topic banco.transacciones --from-beginning --max-messages 50 --timeout-ms 10000 --property print.key=true'
+# 5. ese evento leido dentro de la ec2 (lee todo el topico y filtro por el operationId de la transferencia)
+ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> "docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic banco.transacciones --from-beginning --timeout-ms 10000 --property print.key=true 2>/dev/null" | grep "$OP"
 
 # 6. notificaciones (local) lo consumio desde la ec2, y el grupo quedo con lag 0
 OPS=$(scripts/token.sh ops)
-curl -sk -H "Authorization: Bearer $OPS" https://localhost:8443/api/notificaciones
+curl -sk -H "Authorization: Bearer $OPS" https://localhost:8443/api/notificaciones | grep -o "{[^}]*${OP}[^}]*}"
 ssh -i ~/.ssh/labsuser.pem ec2-user@<ip> 'docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group notificaciones'
 ```
 
