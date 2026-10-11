@@ -5,8 +5,6 @@ import cl.duoc.bank.shared.DomainDtos.Profile;
 import cl.duoc.bank.shared.HttpConfig;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -17,7 +15,6 @@ import org.springframework.web.server.ResponseStatusException;
 // antes de abrir una cuenta reviso en ms-clientes que el cliente exista (con el mismo token del usuario)
 @Component
 public class ClientesClient {
-    private static final Logger LOG = LoggerFactory.getLogger(ClientesClient.class);
     private final RestClient clientes;
 
     public ClientesClient(@Qualifier("loadBalancedRestClientBuilder") RestClient.Builder builder) {
@@ -36,10 +33,6 @@ public class ClientesClient {
         if (error instanceof ResponseStatusException e && e.getStatusCode().value() == 404) {
             throw new ApiException(HttpStatus.CONFLICT, "El cliente no esta registrado en ms-clientes");
         }
-        if (error instanceof ResponseStatusException e) {
-            throw e;
-        }
-        LOG.warn("ms-clientes no responde, no se puede abrir la cuenta: {}", error.toString());
-        throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "No se pudo validar el cliente, intenta en unos segundos");
+        throw HttpConfig.reenviarOFallar(error, "No se pudo validar el cliente, intenta en unos segundos");
     }
 }

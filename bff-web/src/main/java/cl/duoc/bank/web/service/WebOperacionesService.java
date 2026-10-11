@@ -3,13 +3,11 @@ package cl.duoc.bank.web.service;
 import static cl.duoc.bank.shared.DomainDtos.*;
 
 import cl.duoc.bank.shared.BankClient;
+import cl.duoc.bank.shared.HttpConfig;
 import cl.duoc.bank.web.dto.WebDtos;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -17,7 +15,6 @@ import org.springframework.web.server.ResponseStatusException;
 // si el microservicio esta caido se responde 503 al tiro en vez de dejar el navegador colgado
 @Service
 public class WebOperacionesService {
-    private static final Logger LOG = LoggerFactory.getLogger(WebOperacionesService.class);
     private final BankClient bankClient;
 
     public WebOperacionesService(BankClient bankClient) {
@@ -57,34 +54,31 @@ public class WebOperacionesService {
 
     // resilience4j busca el fallback con los mismos parametros + la excepcion, por eso hay uno por metodo
     Receipt transferirFallback(WebDtos.Transfer t, String key, String token, Throwable error) {
-        throw caido("ms-pagos", error);
+        throw caido(error);
     }
 
     Receipt pagarFallback(WebDtos.BillPayment p, String key, String token, Throwable error) {
-        throw caido("ms-pagos", error);
+        throw caido(error);
     }
 
     List<Receipt> operacionesFallback(String token, Throwable error) {
-        throw caido("ms-pagos", error);
+        throw caido(error);
     }
 
     Account cuentaFallback(WebDtos.NewAccount c, String token, Throwable error) {
-        throw caido("ms-cuentas", error);
+        throw caido(error);
     }
 
     Account cerrarFallback(long id, String token, Throwable error) {
-        throw caido("ms-cuentas", error);
+        throw caido(error);
     }
 
     Profile perfilFallback(WebDtos.ProfileChange c, String token, Throwable error) {
-        throw caido("ms-clientes", error);
+        throw caido(error);
     }
 
-    private static ResponseStatusException caido(String servicio, Throwable error) {
-        if (error instanceof ResponseStatusException e) {
-            return e; // 4xx de negocio (sin fondos, cuenta ajena) pasa tal cual
-        }
-        LOG.warn("{} no responde desde la web: {}", servicio, error.toString());
-        return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Servicio no disponible por ahora, no se hizo ningun cambio");
+    // un 4xx de negocio (sin fondos, cuenta ajena) pasa tal cual, si el servicio no esta es 503
+    private static ResponseStatusException caido(Throwable error) {
+        return HttpConfig.reenviarOFallar(error, "Servicio no disponible por ahora, no se hizo ningun cambio");
     }
 }

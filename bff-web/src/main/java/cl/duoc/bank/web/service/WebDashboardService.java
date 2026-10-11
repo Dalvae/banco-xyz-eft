@@ -1,6 +1,7 @@
 package cl.duoc.bank.web.service;
 
 import cl.duoc.bank.shared.BankClient;
+import cl.duoc.bank.shared.HttpConfig;
 import cl.duoc.bank.shared.DomainDtos;
 import cl.duoc.bank.shared.Llamadas;
 import cl.duoc.bank.web.dto.WebDtos;
@@ -12,7 +13,6 @@ import io.github.resilience4j.retry.annotation.Retry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -64,11 +64,7 @@ public class WebDashboardService {
     }
 
     WebDtos.MovementPage movementsFallback(long accountId, int page, int size, String token, Throwable error) {
-        if (error instanceof ResponseStatusException e) {
-            throw e;
-        }
-        LOG.warn("ms-cuentas no responde al pedir movimientos: {}", error.toString());
-        throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Movimientos no disponibles por ahora");
+        throw HttpConfig.reenviarOFallar(error, "Movimientos no disponibles por ahora");
     }
 
     private WebDtos.Account toAccount(DomainDtos.Account account, DomainDtos.MovementPage movements) {

@@ -3,17 +3,14 @@ package cl.duoc.bank.atm.service;
 import cl.duoc.bank.atm.dto.AtmDtos;
 import cl.duoc.bank.shared.BankClient;
 import cl.duoc.bank.shared.DomainDtos;
+import cl.duoc.bank.shared.HttpConfig;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AtmService {
-    private static final Logger LOG = LoggerFactory.getLogger(AtmService.class);
     private final BankClient bankClient;
 
     public AtmService(BankClient bankClient) {
@@ -60,10 +57,6 @@ public class AtmService {
     }
 
     private static ResponseStatusException sinConexion(Throwable error) {
-        if (error instanceof ResponseStatusException e) {
-            return e;
-        }
-        LOG.warn("el cajero no tiene conexion con los microservicios: {}", error.toString());
-        return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Cajero sin conexion con el banco, intenta mas tarde");
+        return HttpConfig.reenviarOFallar(error, "Cajero sin conexion con el banco, intenta mas tarde");
     }
 }

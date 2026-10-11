@@ -3,10 +3,13 @@ package cl.duoc.bank.shared;
 import java.io.IOException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.web.client.RestClientBuilderConfigurer;
 import org.springframework.cloud.client.loadbalancer.LoadBalanced;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpRequest;
 import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -17,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 // con @LoadBalanced la url es el nombre en eureka (http://ms-cuentas) y el loadbalancer elige la instancia
 @Configuration
 public class HttpConfig {
+    private static final Logger LOG = LoggerFactory.getLogger(HttpConfig.class);
     private static final ObjectMapper JSON = new ObjectMapper();
 
     @Bean
@@ -41,5 +45,15 @@ public class HttpConfig {
             // da lo mismo, va sin mensaje
         }
         throw new ResponseStatusException(response.getStatusCode(), detalle);
+    }
+
+    // el fallback que se repetia en los bff y en ms-cuentas: si el error es un 4xx (lo que deja reenviar4xx)
+    // es respuesta de negocio y pasa tal cual; cualquier otra cosa es que el servicio no esta -> 503 con el mensaje
+    public static ResponseStatusException reenviarOFallar(Throwable error, String mensaje) {
+        if (error instanceof ResponseStatusException e) {
+            return e;
+        }
+        LOG.warn("{} ({})", mensaje, error.toString());
+        return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, mensaje);
     }
 }
