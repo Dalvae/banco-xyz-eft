@@ -125,7 +125,7 @@ curl -sk -X POST -H "Authorization: Bearer $OPS" $G/api/notificaciones/listeners
 
 ## 5. Resilience4j y fallback
 
-config (en `config-repo/application.yml`): retry de 3 intentos cada 100 ms, circuito con ventana de 10, minimo 4 llamadas, se abre con 50 % de fallas y queda abierto 15s. la salida de estos mismos comandos esta en `evidencias/resiliencia.txt`.
+config (en `config-repo/application.yml`): retry de 3 intentos cada 100 ms, circuito con ventana de 10, minimo 4 llamadas, se abre con 50 % de fallas y queda abierto 15s. la salida de estos mismos comandos esta en `evidencias/05-resiliencia.txt`.
 
 ```bash
 # 1. todo sano, circuito CLOSED
@@ -215,12 +215,12 @@ docker-compose run --rm batch --spring.batch.job.name=transaccionesJob --batch.d
 
 los reportes csv (omitidos, resumen diario, auditoria) quedan en el volumen `batch-reportes` (`/app/reportes`).
 
-los resultados de cada job (con las lineas `Fin job=... read=... write=... descartadas=...` y `Tasa de omision`) quedaron en `evidencias/batch-*.txt`.
+los resultados de cada job (con las lineas `Fin job=... read=... write=... descartadas=...` y `Tasa de omision`) quedaron en `evidencias/04-batch-*.txt`.
 
 ## 9. Tests
 
 ```bash
-mvn package     # 36 tests, no necesitan docker (h2 en modo mysql, kafka mockeado)
+mvn package     # 38 tests, no necesitan docker (h2 en modo mysql, kafka mockeado)
 ```
 
 ## 10. Correr un servicio fuera de Docker (desde el IDE)

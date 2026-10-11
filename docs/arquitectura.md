@@ -132,7 +132,7 @@ flowchart TB
 
 ## Transferencia: saga con compensacion y evento Kafka
 
-No hay transaccion distribuida. ms-pagos guarda la operacion como PENDIENTE, debita, acredita y si el credito falla pide la reversa del debito. El evento se guarda en la tabla outbox en la misma transaccion que el estado COMPLETADA y otro proceso lo manda a kafka cada 5 s.
+No hay transaccion distribuida. ms-pagos guarda la operacion como PENDIENTE, debita, acredita y si el credito falla revierte primero el credito y despues el debito. El evento se guarda en la tabla outbox en la misma transaccion que el estado COMPLETADA y otro proceso lo manda a kafka cada 5 s.
 
 ```mermaid
 %% transferencia: saga con compensacion + evento kafka via outbox
@@ -156,7 +156,7 @@ sequenceDiagram
         P-->>U: 200 comprobante
     else rechazo o ms-cuentas caido
         C--xP: 4xx / timeout
-        P->>C: reversa de op-deb
+        P->>C: reversa de op-cre (si quedo) y op-deb
         Note over P: REVERTIDA o queda<br/>para el reconciliador
         P-->>U: 409 / 503 sin cargo
     end

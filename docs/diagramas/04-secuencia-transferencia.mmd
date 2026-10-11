@@ -19,7 +19,7 @@ sequenceDiagram
         P-->>U: 200 comprobante
     else rechazo o ms-cuentas caido
         C--xP: 4xx / timeout
-        P->>C: reversa de op-deb
+        P->>C: reversa de op-cre (si quedo) y op-deb
         Note over P: REVERTIDA o queda<br/>para el reconciliador
         P-->>U: 409 / 503 sin cargo
     end

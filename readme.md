@@ -135,7 +135,7 @@ los tests: `mvn package` (necesita java 21 y maven), corren sin docker (h2 en mo
 - **oauth2**: auth-server con spring authorization server, authorization code + PKCE para los canales y client credentials para servicio a servicio (ms-pagos -> ms-cuentas con el scope `cuentas:operar`, que ningun canal tiene). todos los servicios son resource servers.
 - **resilience4j y fallback**: config en `config-repo/application.yml`: ventana de 10 llamadas, minimo 4, se abre con 50 % de fallas por 15s, y retry de 3 intentos cada 100 ms solo ante errores de conexion o 5xx. circuit breaker + retry en los bff (si ms-cuentas se cae la web y el movil responden con `degraded: true` y el cajero da 503), en ms-pagos hacia ms-cuentas, en ms-cuentas hacia ms-clientes, y en el gateway si se cae un bff entero.
 - **kafka**: topicos `banco.transacciones` (transaccion completada) y `banco.alertas-seguridad` (monto alto o 3 rechazos seguidos en 10 min). productor: ms-pagos con outbox. consumidor: notificaciones con ack manual y sin duplicados.
-- **consistencia**: no hay transacciones distribuidas, es una saga: ms-pagos guarda la operacion, pide debito y credito a ms-cuentas (idempotentes por operationId) y si el credito falla pide la reversa del debito. si ms-cuentas no responde para revertir, la operacion queda `COMPENSACION_PENDIENTE` y un reconciliador la termina cada 15s. el evento se guarda en la misma transaccion que cierra la operacion (outbox), asi nunca se publica algo que no paso ni se pierde algo que si.
+- **consistencia**: no hay transacciones distribuidas, es una saga: ms-pagos guarda la operacion, pide debito y credito a ms-cuentas (idempotentes por operationId) y si el credito falla revierte primero el credito (si alcanzo a quedar) y despues el debito. si ms-cuentas no responde para revertir, la operacion queda `COMPENSACION_PENDIENTE` y un reconciliador la reintenta cada 15s; despues de 5 intentos queda en `REQUIERE_REVISION`. las transferencias entre cuentas de distinta moneda se rechazan con 409 antes de mover plata. el evento se guarda en la misma transaccion que cierra la operacion (outbox), asi nunca se publica algo que no paso ni se pierde algo que si.
 - **monitoreo**: actuator en todos (`health`, `metrics`, `circuitbreakers`), traceId/spanId en los logs (micrometer tracing) para seguir una operacion por varios servicios, y kafka-ui.
 - **escalado horizontal**: ms-*, bff-* y notificaciones se escalan con `--scale`. probado con 2 replicas de ms-cuentas.
 - **docker / aws**: un Dockerfile por servicio y un solo compose que levanta todo en local. en aws (learner lab) se despliega solo kafka, en una ec2 que arma el playbook de `infra/ansible/`, y los microservicios locales se conectan a ese broker con `KAFKA_BOOTSTRAP=<ip publica>:9094` (asi lo pidio el profe, sin alb). el paso a paso, la evidencia y la mejora futura a ecs/msk/rds estan en [despliegue.md](despliegue.md).
@@ -146,14 +146,14 @@ en [evidencias/](evidencias/) (todas del 2026-10-10, con el compose arriba en co
 
 | Archivo | Que muestra |
 |---|---|
-| `00-mvn-package.txt` | `mvn package` en verde, 36 tests en 13 modulos |
-| `01-e2e.txt` | tokens por el gateway, los 3 bff, 401/403 por canal, retiro, deposito, transferencia, pago, saga que devuelve la plata, idempotencia, abrir/cerrar cuenta, perfil, notificaciones y el grupo de consumidores de kafka |
+| `01-mvn-package.txt` | `mvn package` en verde, 38 tests en 13 modulos |
+| `02-e2e.txt` | tokens por el gateway, los 3 bff, 401/403 por canal, retiro, deposito, transferencia, pago, saga que devuelve la plata, idempotencia, abrir/cerrar cuenta, perfil, notificaciones y el grupo de consumidores de kafka |
 | `03-escalado-eureka.txt` | `--scale ms-cuentas=2`, las 2 instancias en eureka y 10 consultas de saldo repartidas 5/5 entre las 2 |
 | `04-batch.txt` | los 3 jobs como contenedor one-shot, conteos en mysql y la reejecucion automatica (FAILED -> restart de la misma instancia -> COMPLETED) |
-| `05-docker-stats.txt` | memoria de todo arriba (unos 2,9 GB con 2 replicas de ms-cuentas) |
-| `resiliencia.txt` | resilience4j paso a paso con los comandos de instrucciones.md seccion 5: CLOSED, ms-cuentas apagado, 3 intentos en `/actuator/retryevents` (bff-web y ms-pagos), OPEN con fallback degradado en web/movil y 503 en el cajero, HALF_OPEN y CLOSED al volver, y el fallback del gateway con bff-atm caido |
-| `batch-transacciones.txt`, `batch-intereses.txt`, `batch-estadoCuenta.txt` | las lineas del `BatchMetricsListener` de cada job (leidos, escritos, descartados, tasa de omision) |
-| `kafka-ec2.txt` | kafka corriendo en la ec2 (instancia, `docker compose ps` por ssh, topicos), el `KAFKA_BOOTSTRAP` de los servicios locales y un evento producido en local, leido en la ec2 y consumido por notificaciones (se agrega al desplegar kafka en la ec2) |
+| `04-batch-transacciones.txt`, `04-batch-intereses.txt`, `04-batch-estadoCuenta.txt` | las lineas del `BatchMetricsListener` de cada job (leidos, escritos, descartados, tasa de omision) |
+| `05-resiliencia.txt` | resilience4j paso a paso con los comandos de instrucciones.md seccion 5: CLOSED, ms-cuentas apagado, 3 intentos en `/actuator/retryevents` (bff-web y ms-pagos), OPEN con fallback degradado en web/movil y 503 en el cajero, HALF_OPEN y CLOSED al volver, y el fallback del gateway con bff-atm caido |
+| `06-docker-stats.txt` | memoria de todo arriba (unos 2,9 GB con 2 replicas de ms-cuentas) |
+| `07-kafka-ec2.txt` | kafka corriendo en la ec2 (instancia, `docker compose ps` por ssh, topicos), el `KAFKA_BOOTSTRAP` de los servicios locales y un evento producido en local, leido en la ec2 y consumido por notificaciones (se agrega al desplegar kafka en la ec2) |
 
 capturas en [evidencias/capturas/](evidencias/capturas/):
 
