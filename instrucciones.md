@@ -220,7 +220,7 @@ los resultados de cada job (con las lineas `Fin job=... read=... write=... desca
 ## 9. Tests
 
 ```bash
-mvn package     # 34 tests, no necesitan docker (h2 en modo mysql, kafka mockeado)
+mvn package     # 36 tests, no necesitan docker (h2 en modo mysql, kafka mockeado)
 ```
 
 ## 10. Correr un servicio fuera de Docker (desde el IDE)

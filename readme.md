@@ -146,7 +146,7 @@ en [evidencias/](evidencias/) (todas del 2026-10-10, con el compose arriba en co
 
 | Archivo | Que muestra |
 |---|---|
-| `00-mvn-package.txt` | `mvn package` en verde, 34 tests en 13 modulos |
+| `00-mvn-package.txt` | `mvn package` en verde, 36 tests en 13 modulos |
 | `01-e2e.txt` | tokens por el gateway, los 3 bff, 401/403 por canal, retiro, deposito, transferencia, pago, saga que devuelve la plata, idempotencia, abrir/cerrar cuenta, perfil, notificaciones y el grupo de consumidores de kafka |
 | `03-escalado-eureka.txt` | `--scale ms-cuentas=2`, las 2 instancias en eureka y 10 consultas de saldo repartidas 5/5 entre las 2 |
 | `04-batch.txt` | los 3 jobs como contenedor one-shot, conteos en mysql y la reejecucion automatica (FAILED -> restart de la misma instancia -> COMPLETED) |
