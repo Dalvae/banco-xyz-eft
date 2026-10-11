@@ -6,7 +6,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
@@ -29,6 +31,7 @@ import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -61,7 +64,7 @@ class PagosTest {
         reset(cuentas);
         when(cuentas.debitar(anyLong(), any())).thenAnswer(i -> pierna(i.getArgument(1, cl.duoc.bank.shared.DomainDtos.LegRequest.class).operationId(), "900000"));
         when(cuentas.acreditar(anyLong(), any())).thenAnswer(i -> pierna(i.getArgument(1, cl.duoc.bank.shared.DomainDtos.LegRequest.class).operationId(), "1000000"));
-        when(cuentas.revertir(anyString())).thenAnswer(i -> pierna(i.getArgument(0), "0"));
+        when(cuentas.revertir(anyString())).thenAnswer(i -> reversa(i.getArgument(0)));
         when(kafka.send(anyString(), anyString(), anyString())).thenReturn(kafkaOk());
     }
 
@@ -110,9 +113,36 @@ class PagosTest {
 
         // vuelve ms-cuentas
         reset(cuentas);
-        when(cuentas.revertir(anyString())).thenAnswer(i -> pierna(i.getArgument(0), "0"));
+        when(cuentas.revertir(anyString())).thenAnswer(i -> reversa(i.getArgument(0)));
         pagos.reconciliar();
         assertThat(estado("tr-caido")).isEqualTo("REVERTIDA");
+    }
+
+    @Test
+    void laCompensacionRevierteElCreditoAntesQueElDebitoYTieneTope() {
+        // el abono volvio ANULADA (no quedo aplicado): se trata como rechazo y se compensa, credito primero
+        doReturn(new LegResult("x", 102, null, BigDecimal.ONE, BigDecimal.ZERO, "CLP", "ANULADA")).when(cuentas).acreditar(anyLong(), any());
+        assertThatThrownBy(() -> pagos.transferir("demo", 101L, 102L, new BigDecimal("5000"), "tr-anulada", "WEB"))
+                .isInstanceOf(ApiException.class).hasMessageContaining("se devolvio");
+        String id = jdbc.queryForObject("SELECT operation_id FROM operacion WHERE idempotency_key='tr-anulada'", String.class);
+        InOrder orden = inOrder(cuentas);
+        orden.verify(cuentas).revertir(id + "-cre");
+        orden.verify(cuentas).revertir(id + "-deb");
+        assertThat(estado("tr-anulada")).isEqualTo("REVERTIDA");
+
+        // si el credito no se puede revertir (el destino ya gasto la plata) no se repone el debito
+        doThrow(new CuentasNoDisponible(new RuntimeException("timeout"))).when(cuentas).acreditar(anyLong(), any());
+        doThrow(new ResponseStatusException(HttpStatus.CONFLICT, "No hay saldo para revertir el credito")).when(cuentas).revertir(anyString());
+        assertThatThrownBy(() -> pagos.transferir("demo", 101L, 102L, new BigDecimal("5000"), "tr-gastada", "WEB"))
+                .isInstanceOf(ApiException.class).hasMessageContaining("incierto");
+        String gastada = jdbc.queryForObject("SELECT operation_id FROM operacion WHERE idempotency_key='tr-gastada'", String.class);
+        verify(cuentas, never()).revertir(gastada + "-deb");
+        // el reconciliador lo intenta 5 veces y despues la deja para revision
+        for (int i = 0; i < 5; i++) pagos.reconciliar();
+        assertThat(estado("tr-gastada")).isEqualTo("REQUIERE_REVISION");
+        pagos.reconciliar();
+        verify(cuentas, times(6)).revertir(gastada + "-cre");
+        verify(cuentas, never()).revertir(gastada + "-deb");
     }
 
     @Test
@@ -153,6 +183,10 @@ class PagosTest {
 
     private static LegResult pierna(String op, String saldo) {
         return new LegResult(op, 101, "demo", BigDecimal.ONE, new BigDecimal(saldo), "CLP", "APLICADA");
+    }
+
+    private static LegResult reversa(String op) {
+        return new LegResult(op, 101, "demo", BigDecimal.ONE, BigDecimal.ZERO, "CLP", "REVERTIDA");
     }
 
     private static CompletableFuture<SendResult<String, String>> kafkaOk() {

@@ -3,6 +3,7 @@ package cl.duoc.bank.notificaciones;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -10,8 +11,12 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.core.KafkaOperations;
 import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.converter.StringJsonMessageConverter;
+import org.springframework.util.backoff.ExponentialBackOff;
 
 // config del consumidor como en la clase: ConsumerFactory + ConcurrentKafkaListenerContainerFactory.
 // ahora son 2 topicos con eventos distintos, asi que leo String y el converter arma el record segun
@@ -38,13 +43,20 @@ public class KafkaConsumerConfig {
 
     @Bean
     ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
-            ConsumerFactory<String, String> consumerFactory) {
+            ConsumerFactory<String, String> consumerFactory, KafkaOperations<?, ?> kafkaTemplate) {
         ConcurrentKafkaListenerContainerFactory<String, String> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
         factory.setRecordMessageConverter(new StringJsonMessageConverter());
         factory.setAutoStartup(autoStartup);
         // ack manual, se confirma despues de guardar
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+        // si el listener falla (bd caida, evento mal formado) se reintenta con espera 1s, 2s, 4s... hasta ~1 min
+        // y despues el mensaje se manda a <topico>.DLT para no trancar la particion. el KafkaTemplate es el de spring boot
+        var dlt = new DeadLetterPublishingRecoverer(kafkaTemplate, (record, error) -> new TopicPartition(record.topic() + ".DLT", -1));
+        var backoff = new ExponentialBackOff(1000, 2.0);
+        backoff.setMaxInterval(15000);
+        backoff.setMaxElapsedTime(60000);
+        factory.setCommonErrorHandler(new DefaultErrorHandler(dlt, backoff));
         return factory;
     }
 }

@@ -35,7 +35,7 @@ public class EventosListener {
         };
         Long cuenta = evento.cuentaOrigen() != null ? evento.cuentaOrigen() : evento.cuentaDestino();
         guardar(evento.operationId(), Eventos.TOPICO_TRANSACCIONES, evento.tipo(), cuenta, evento.titular(), texto);
-        // si el insert falla no llega aca, no se confirma y kafka lo vuelve a entregar
+        // si el insert falla no llega aca y no se confirma: el error handler lo reintenta con espera y si sigue fallando va al .DLT
         ack.acknowledge();
     }
 

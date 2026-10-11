@@ -13,6 +13,7 @@ import cl.duoc.bank.cuentas.importer.LegacyCsvImporter;
 import cl.duoc.bank.shared.ApiException;
 import cl.duoc.bank.shared.DomainDtos.LegRequest;
 import cl.duoc.bank.shared.DomainDtos.LegResult;
+import cl.duoc.bank.shared.DomainDtos.OpenAccount;
 import cl.duoc.bank.shared.DomainDtos.Profile;
 import java.math.BigDecimal;
 import java.util.List;
@@ -90,6 +91,18 @@ class CuentasIntegrationTest {
     }
 
     @Test
+    void transferenciaEntreMonedasDistintasSeRechazaSinMoverPlata() {
+        long usd = cuentas.abrir("other", new OpenAccount("Cuenta dolares", "USD")).id();
+        LegRequest aDolares = new LegRequest("tr-usd-deb", new BigDecimal("1000"), "demo", "transferencia", null, usd);
+        assertThatThrownBy(() -> cuentas.debitar(101, aDolares))
+                .isInstanceOf(ApiException.class).hasMessageContaining("distinta moneda");
+        assertThat(cuentas.balance(101, "demo").balance()).isEqualByComparingTo("1000000.00");
+        // entre 2 cuentas CLP pasa normal
+        cuentas.debitar(101, new LegRequest("tr-clp-deb", new BigDecimal("1000"), "demo", "transferencia", null, 102L));
+        assertThat(cuentas.balance(101, "demo").balance()).isEqualByComparingTo("999000.00");
+    }
+
+    @Test
     void reversaDevuelveLaPlataYAnulaLoQueNoLlego() {
         cuentas.debitar(101, pierna("tr-1-deb", "30000", "demo"));
         cuentas.revertir("tr-1-deb");
@@ -135,7 +148,7 @@ class CuentasIntegrationTest {
     }
 
     private static LegRequest pierna(String op, String monto, String owner) {
-        return new LegRequest(op, new BigDecimal(monto), owner, null, null);
+        return new LegRequest(op, new BigDecimal(monto), owner, null, null, null);
     }
 
     private static RequestPostProcessor usuario(String sub, String scope) {

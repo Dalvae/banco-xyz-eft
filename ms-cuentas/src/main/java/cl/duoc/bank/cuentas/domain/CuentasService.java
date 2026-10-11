@@ -116,6 +116,14 @@ public class CuentasService {
         if (previo != null) return previo;
         if (request.owner() != null) requireOwner(cuenta, request.owner());
         requireAbierta(cuenta);
+        // no hay conversion de moneda: una transferencia CLP -> USD se rechaza antes de sacar la plata.
+        // si la otra cuenta no existe no digo nada aca, el credito la rechaza y ms-pagos devuelve el debito
+        if (request.counterpartAccount() != null) {
+            List<String> moneda = jdbc.queryForList("SELECT currency FROM account WHERE id=?", String.class, request.counterpartAccount());
+            if (!moneda.isEmpty() && !moneda.get(0).equals(cuenta.currency())) {
+                throw new ApiException(HttpStatus.CONFLICT, "Las cuentas son de distinta moneda (" + cuenta.currency() + " y " + moneda.get(0) + ")");
+            }
+        }
         if (cuenta.balance().compareTo(monto) < 0) {
             throw new ApiException(HttpStatus.CONFLICT, "Fondos insuficientes");
         }

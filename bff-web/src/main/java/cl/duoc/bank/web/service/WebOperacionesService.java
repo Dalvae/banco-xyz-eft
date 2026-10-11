@@ -15,6 +15,7 @@ import org.springframework.web.server.ResponseStatusException;
 // si el microservicio esta caido se responde 503 al tiro en vez de dejar el navegador colgado
 @Service
 public class WebOperacionesService {
+    private static final String INCIERTO = "Servicio no disponible por ahora, el estado quedo incierto: consulta de nuevo con la misma Idempotency-Key";
     private final BankClient bankClient;
 
     public WebOperacionesService(BankClient bankClient) {
@@ -53,12 +54,13 @@ public class WebOperacionesService {
     }
 
     // resilience4j busca el fallback con los mismos parametros + la excepcion, por eso hay uno por metodo
+    // en plata, si se corto a la mitad no sabemos si alcanzo a aplicarse: se consulta con la misma key
     Receipt transferirFallback(WebDtos.Transfer t, String key, String token, Throwable error) {
-        throw caido(error);
+        throw HttpConfig.reenviarOFallar(error, INCIERTO);
     }
 
     Receipt pagarFallback(WebDtos.BillPayment p, String key, String token, Throwable error) {
-        throw caido(error);
+        throw HttpConfig.reenviarOFallar(error, INCIERTO);
     }
 
     List<Receipt> operacionesFallback(String token, Throwable error) {
@@ -79,6 +81,6 @@ public class WebOperacionesService {
 
     // un 4xx de negocio (sin fondos, cuenta ajena) pasa tal cual, si el servicio no esta es 503
     private static ResponseStatusException caido(Throwable error) {
-        return HttpConfig.reenviarOFallar(error, "Servicio no disponible por ahora, no se hizo ningun cambio");
+        return HttpConfig.reenviarOFallar(error, "Servicio no disponible por ahora, intenta en unos segundos");
     }
 }

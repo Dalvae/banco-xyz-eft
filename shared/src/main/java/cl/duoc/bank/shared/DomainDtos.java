@@ -15,8 +15,10 @@ public final class DomainDtos {
                            BigDecimal amount, String description, String source) { }
     public record MovementPage(List<Movement> items, int page, int size, long total) { }
     public record OpenAccount(String displayName, String currency) { }
-    // lo que piden y responden los endpoints internos de ms-cuentas (debito, credito, reversa)
-    public record LegRequest(String operationId, BigDecimal amount, String owner, String type, String description) { }
+    // lo que piden y responden los endpoints internos de ms-cuentas (debito, credito, reversa).
+    // counterpartAccount es la otra cuenta de una transferencia (puede venir null), con eso se revisa la moneda
+    public record LegRequest(String operationId, BigDecimal amount, String owner, String type, String description,
+                             Long counterpartAccount) { }
     public record LegResult(String operationId, long accountId, String owner, BigDecimal amount,
                             BigDecimal balance, String currency, String status) { }
     // ms-pagos

@@ -40,6 +40,9 @@ import org.springframework.web.server.ResponseStatusException;
 public class PagosService {
     private static final Logger LOG = LoggerFactory.getLogger(PagosService.class);
     private static final BigDecimal MAX_RETIRO = new BigDecimal("200000.00");
+    // despues de esto el reconciliador deja de intentar y la operacion la tiene que mirar una persona
+    private static final int MAX_INTENTOS_RECONCILIACION = 5;
+    private static final String INCIERTO = "El estado quedo incierto, consulta de nuevo con la misma Idempotency-Key";
     private static final String COLUMNAS = "operation_id,tipo,cuenta_origen,cuenta_destino,monto,saldo_origen,estado,detalle";
     private final CuentasClient cuentas;
     private final JdbcTemplate jdbc;
@@ -109,10 +112,13 @@ public class PagosService {
         }
 
         BigDecimal saldo = null;
+        LegResult debito = null;
         try {
             if (op.origen() != null) {
-                saldo = cuentas.debitar(op.origen(), new LegRequest(op.id() + "-deb", monto, op.titular(),
-                        op.tipo().toLowerCase(), descripcion(op, true))).balance();
+                // va la cuenta destino para que ms-cuentas rechace si son de distinta moneda antes de debitar
+                debito = cuentas.debitar(op.origen(), new LegRequest(op.id() + "-deb", monto, op.titular(),
+                        op.tipo().toLowerCase(), descripcion(op, true), op.destino()));
+                saldo = debito.balance();
             }
         } catch (ResponseStatusException rechazo) {
             // sin fondos, cuenta ajena o cerrada: no se movio nada
@@ -121,11 +127,21 @@ public class PagosService {
         } catch (CuentasNoDisponible caido) {
             throw compensarYAvisar(op, "ms-cuentas no respondio al debitar");
         }
+        // si el debito vuelve REVERTIDA/ANULADA no se cobro nada: no sigo con el credito
+        if (debito != null && !"APLICADA".equals(debito.status())) {
+            boolean ok = compensar(op);
+            estado(op, ok ? "REVERTIDA" : "COMPENSACION_PENDIENTE", "El debito quedo " + debito.status());
+            throw new ApiException(HttpStatus.CONFLICT, "No se pudo aplicar el cargo (debito " + debito.status() + ")");
+        }
 
         if (op.destino() != null) {
             try {
                 LegResult credito = cuentas.acreditar(op.destino(), new LegRequest(op.id() + "-cre", monto, null,
-                        op.tipo().toLowerCase(), descripcion(op, false)));
+                        op.tipo().toLowerCase(), descripcion(op, false), null));
+                if (!"APLICADA".equals(credito.status())) {
+                    // el abono vino revertido o anulado, cuenta como rechazo del destino
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "el credito quedo " + credito.status());
+                }
                 // en un deposito no hay origen, el saldo que se muestra es el de la cuenta que recibio
                 if (op.origen() == null) saldo = credito.balance();
             } catch (ResponseStatusException rechazo) {
@@ -146,8 +162,12 @@ public class PagosService {
     }
 
     private Receipt completar(Op op, BigDecimal saldo) {
-        tx.executeWithoutResult(status -> {
-            jdbc.update("UPDATE operacion SET estado='COMPLETADA', saldo_origen=?, actualizada_en=CURRENT_TIMESTAMP WHERE operation_id=?", saldo, op.id());
+        boolean cerrada = Boolean.TRUE.equals(tx.execute(status -> {
+            // si mientras tanto el reconciliador la revirtio no la marco completada ni mando eventos
+            if (jdbc.update("UPDATE operacion SET estado='COMPLETADA', saldo_origen=?, actualizada_en=CURRENT_TIMESTAMP "
+                    + "WHERE operation_id=? AND estado='PENDIENTE'", saldo, op.id()) == 0) {
+                return false;
+            }
             Instant ahora = Instant.now();
             Long cuentaClave = op.origen() != null ? op.origen() : op.destino();
             encolar(Eventos.TOPICO_TRANSACCIONES, String.valueOf(cuentaClave), new TransaccionCompletada(op.id(), op.tipo(),
@@ -157,14 +177,19 @@ public class PagosService {
                 encolar(Eventos.TOPICO_ALERTAS, op.titular(), new AlertaSeguridad(UUID.randomUUID().toString(), "MONTO_ALTO",
                         op.titular(), op.origen(), op.tipo() + " por $" + op.monto().toPlainString() + " desde " + op.canal(), ahora));
             }
-        });
+            return true;
+        }));
+        if (!cerrada) {
+            LOG.warn("Operacion {} {} ya no estaba PENDIENTE al completarla (la tomo el reconciliador)", op.tipo(), op.id());
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, INCIERTO);
+        }
         LOG.info("Operacion {} {} COMPLETADA titular={} monto={}", op.tipo(), op.id(), op.titular(), op.monto());
         return new Receipt(op.id(), op.tipo(), op.origen(), op.destino(), op.monto(), saldo, "COMPLETADA", null);
     }
 
     private void rechazar(Op op, String motivo) {
         tx.executeWithoutResult(status -> {
-            estado(op, "RECHAZADA", motivo);
+            if (!estado(op, "RECHAZADA", motivo)) return;
             // varios rechazos seguidos del mismo titular (sin fondos, cuentas ajenas) puede ser alguien probando
             Integer rechazos = jdbc.queryForObject("SELECT COUNT(*) FROM operacion WHERE titular=? AND estado='RECHAZADA' AND creada_en > ?",
                     Integer.class, op.titular(), Timestamp.from(Instant.now().minus(10, ChronoUnit.MINUTES)));
@@ -181,41 +206,75 @@ public class PagosService {
         boolean ok = compensar(op);
         estado(op, ok ? "REVERTIDA" : "COMPENSACION_PENDIENTE", motivo);
         LOG.warn("Operacion {} {}: {} -> {}", op.tipo(), op.id(), motivo, ok ? "revertida" : "queda para el reconciliador");
-        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "No pudimos completar la operacion, no se hizo ningun cargo. Intenta en unos segundos");
+        // solo si la reversa salio se puede asegurar que no quedo cargo
+        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, ok
+                ? "No pudimos completar la operacion, se revirtio y no quedo ningun cargo. Intenta en unos segundos"
+                : "No pudimos completar la operacion. " + INCIERTO);
     }
 
-    // pide la reversa de las 2 piernas. si una nunca llego, ms-cuentas la deja anulada (asi no se aplica tarde)
+    // pide la reversa de las 2 piernas, primero el credito y despues el debito: si el destino ya gasto la plata
+    // la reversa del credito falla y no le devuelvo al origen algo que no recupere.
+    // si una pierna nunca llego, ms-cuentas la deja anulada (asi no se aplica tarde)
     private boolean compensar(Op op) {
+        return intentarCompensar(op) == Reversa.OK;
+    }
+
+    private enum Reversa { OK, CAIDO, RECHAZADA }
+
+    private Reversa intentarCompensar(Op op) {
         try {
+            if (op.destino() != null) {
+                String credito = cuentas.revertir(op.id() + "-cre").status();
+                if (!"REVERTIDA".equals(credito) && !"ANULADA".equals(credito)) return Reversa.RECHAZADA;
+            }
             if (op.origen() != null) cuentas.revertir(op.id() + "-deb");
-            if (op.destino() != null) cuentas.revertir(op.id() + "-cre");
-            return true;
+            return Reversa.OK;
+        } catch (CuentasNoDisponible e) {
+            LOG.warn("No se pudo compensar {} todavia, ms-cuentas no responde", op.id());
+            return Reversa.CAIDO;
         } catch (RuntimeException e) {
             LOG.warn("No se pudo compensar {} todavia: {}", op.id(), e.toString());
-            return false;
+            return Reversa.RECHAZADA;
         }
     }
 
     // si ms-cuentas estaba caido al compensar, o ms-pagos se murio a la mitad de una saga, aca se termina
     @Scheduled(initialDelayString = "${pagos.reconciliacion-ms:15000}", fixedDelayString = "${pagos.reconciliacion-ms:15000}")
     public void reconciliar() {
-        List<Op> colgadas = jdbc.query("""
-                SELECT operation_id,tipo,titular,cuenta_origen,cuenta_destino,convenio,monto,canal FROM operacion
+        List<Colgada> colgadas = jdbc.query("""
+                SELECT operation_id,tipo,titular,cuenta_origen,cuenta_destino,convenio,monto,canal,intentos FROM operacion
                 WHERE estado='COMPENSACION_PENDIENTE' OR (estado='PENDIENTE' AND creada_en < ?) ORDER BY creada_en LIMIT 20
-                """, (rs, n) -> new Op(rs.getString(1), rs.getString(2), rs.getString(3), rs.getObject(4, Long.class),
-                rs.getObject(5, Long.class), rs.getString(6), rs.getBigDecimal(7), rs.getString(8)),
+                """, (rs, n) -> new Colgada(new Op(rs.getString(1), rs.getString(2), rs.getString(3), rs.getObject(4, Long.class),
+                rs.getObject(5, Long.class), rs.getString(6), rs.getBigDecimal(7), rs.getString(8)), rs.getInt(9)),
                 Timestamp.from(Instant.now().minus(60, ChronoUnit.SECONDS)));
-        for (Op op : colgadas) {
-            if (compensar(op)) {
-                estado(op, "REVERTIDA", "Revertida por el reconciliador");
-                LOG.info("Reconciliador: operacion {} revertida", op.id());
+        for (Colgada c : colgadas) {
+            Op op = c.op();
+            // la tomo primero: si el request la estaba terminando, alguno de los 2 update no cambia nada y no se pisan
+            if (!estado(op, "COMPENSACION_PENDIENTE", "La toma el reconciliador")) continue;
+            Reversa r = intentarCompensar(op);
+            if (r == Reversa.OK) {
+                if (estado(op, "REVERTIDA", "Revertida por el reconciliador")) LOG.info("Reconciliador: operacion {} revertida", op.id());
+            } else if (r == Reversa.CAIDO) {
+                // si ms-cuentas esta caido no gasto intentos, se reintenta cuando vuelva
+                continue;
+            } else if (c.intentos() + 1 >= MAX_INTENTOS_RECONCILIACION) {
+                if (estado(op, "REQUIERE_REVISION", "No se pudo revertir en " + MAX_INTENTOS_RECONCILIACION + " intentos")) {
+                    LOG.warn("Reconciliador: operacion {} {} titular={} monto={} no se pudo revertir, queda REQUIERE_REVISION",
+                            op.tipo(), op.id(), op.titular(), op.monto());
+                }
+            } else {
+                jdbc.update("UPDATE operacion SET intentos=intentos+1 WHERE operation_id=?", op.id());
             }
         }
     }
 
-    private void estado(Op op, String estado, String detalle) {
-        jdbc.update("UPDATE operacion SET estado=?, detalle=?, actualizada_en=CURRENT_TIMESTAMP WHERE operation_id=?",
-                estado, detalle == null ? null : detalle.substring(0, Math.min(200, detalle.length())), op.id());
+    private record Colgada(Op op, int intentos) { }
+
+    // solo cambia si sigue en curso, asi el reconciliador y el request no se pisan. devuelve si cambio algo
+    private boolean estado(Op op, String estado, String detalle) {
+        return jdbc.update("UPDATE operacion SET estado=?, detalle=?, actualizada_en=CURRENT_TIMESTAMP "
+                + "WHERE operation_id=? AND estado IN ('PENDIENTE','COMPENSACION_PENDIENTE')",
+                estado, detalle == null ? null : detalle.substring(0, Math.min(200, detalle.length())), op.id()) > 0;
     }
 
     private void encolar(String topico, String clave, Object evento) {
