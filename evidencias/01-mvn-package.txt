@@ -1,0 +1,31 @@
+# 2026-10-11 12:34:06 - mvn -B package (compila y corre los tests de todos los modulos, sin docker)
+$ mvn -B package
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.039 s -- in cl.duoc.bank.shared.MontosTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.051 s -- in cl.duoc.bank.config.ConfigServerTest
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.141 s -- in cl.duoc.bank.gateway.GatewayTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.795 s -- in cl.duoc.bank.auth.AuthServerTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.111 s -- in cl.duoc.bank.cuentas.CuentasIntegrationTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.207 s -- in cl.duoc.bank.pagos.PagosTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.718 s -- in cl.duoc.bank.clientes.ClientesTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.768 s -- in cl.duoc.bank.web.WebControllerTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.909 s -- in cl.duoc.bank.mobile.MobileControllerTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.022 s -- in cl.duoc.bank.atm.AtmControllerTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.772 s -- in cl.duoc.bank.notificaciones.NotificacionesTest
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.264 s -- in com.banco.xyz.batch.ReejecucionTest
+Reactor Summary for Banco XYZ EFT - spring cloud, microservicios y batch 1.0.0:
+Banco XYZ EFT - spring cloud, microservicios y batch SUCCESS [  0.001 s]
+shared ............................................. SUCCESS [  0.762 s]
+config-server ...................................... SUCCESS [  2.420 s]
+eureka-server ...................................... SUCCESS [  0.069 s]
+api-gateway ........................................ SUCCESS [  4.557 s]
+auth-server ........................................ SUCCESS [  2.061 s]
+ms-cuentas ......................................... SUCCESS [  3.405 s]
+ms-pagos ........................................... SUCCESS [  3.626 s]
+ms-clientes ........................................ SUCCESS [  2.995 s]
+bff-web ............................................ SUCCESS [  3.035 s]
+bff-mobile ......................................... SUCCESS [  3.207 s]
+bff-atm ............................................ SUCCESS [  3.309 s]
+notificaciones ..................................... SUCCESS [  3.055 s]
+batch .............................................. SUCCESS [  1.521 s]
+BUILD SUCCESS
+Total time:  34.208 s
